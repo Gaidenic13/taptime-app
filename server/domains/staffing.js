@@ -10,26 +10,27 @@ const PRESENT = new Set(["working", "break", "complete"]);
 // Weekday with Monday=0, matching staffing_requirements.weekday.
 const weekdayOf = (dateStr) => (new Date(dateStr + "T12:00:00").getDay() + 6) % 7;
 
-export function coverageFor(orgId, date = todayStr(), { locationId = null } = {}) {
+export async function coverageFor(orgId, date = todayStr(), { locationId = null } = {}) {
   const weekday = weekdayOf(date);
   const nowHM = new Date().toTimeString().slice(0, 5);
   const isToday = date === todayStr();
 
-  const reqs = db.prepare(`
+  const reqs = await db.all(`
     SELECT sr.*, jr.name AS role_name, l.name AS location_name
     FROM staffing_requirements sr
     JOIN job_roles jr ON jr.id = sr.job_role_id
     JOIN locations l ON l.id = sr.location_id
     WHERE sr.organization_id = ? AND sr.weekday = ? ${locationId ? "AND sr.location_id = ?" : ""}
     ORDER BY l.name, sr.start_time, jr.name
-  `).all(...(locationId ? [orgId, weekday, locationId] : [orgId, weekday]));
+  `, ...(locationId ? [orgId, weekday, locationId] : [orgId, weekday]));
 
-  const shifts = db.prepare(`
+  const shifts = await db.all(`
     SELECT s.*, u.job_role_id AS user_role_id FROM shifts s JOIN users u ON u.id = s.user_id
     WHERE s.organization_id = ? AND s.date = ?
-  `).all(orgId, date);
+  `, orgId, date);
 
-  const bands = reqs.map((r) => {
+  const bands = [];
+  for (const r of reqs) {
     const inBand = (s) =>
       s.start_time < r.end_time && r.start_time < s.end_time &&
       (s.job_role_id || s.user_role_id) === r.job_role_id &&
@@ -41,10 +42,10 @@ export function coverageFor(orgId, date = todayStr(), { locationId = null } = {}
     const bandActive = isToday && nowHM >= r.start_time && nowHM <= r.end_time;
     if (bandActive) {
       for (const s of bandShifts) {
-        if (PRESENT.has(dayStatus(s.user_id, date).status)) present++;
+        if (PRESENT.has((await dayStatus(s.user_id, date)).status)) present++;
       }
     }
-    return {
+    bands.push({
       id: r.id, location_id: r.location_id, location: r.location_name,
       role: r.role_name, job_role_id: r.job_role_id,
       band: `${r.start_time}–${r.end_time}`, start_time: r.start_time, end_time: r.end_time,
@@ -52,8 +53,8 @@ export function coverageFor(orgId, date = todayStr(), { locationId = null } = {}
       present: bandActive ? present : null,      // null = band not currently active
       scheduled_gap: Math.max(0, r.required_count - scheduled),
       present_gap: bandActive ? Math.max(0, r.required_count - present) : 0,
-    };
-  });
+    });
+  }
 
   const alerts = bands
     .filter((b) => b.scheduled_gap > 0 || b.present_gap > 0)
@@ -71,8 +72,8 @@ export function coverageFor(orgId, date = todayStr(), { locationId = null } = {}
 
 // Impact preview for leave approval (plan Phase 11): which requirement bands
 // drop below target on each requested day if this person is away.
-export function leaveImpact(orgId, userId, startDate, endDate) {
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+export async function leaveImpact(orgId, userId, startDate, endDate) {
+  const user = await db.get("SELECT * FROM users WHERE id = ?", userId);
   if (!user?.job_role_id) return [];
   const impacts = [];
   const start = new Date(startDate + "T12:00:00");
@@ -80,21 +81,21 @@ export function leaveImpact(orgId, userId, startDate, endDate) {
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const date = d.toISOString().slice(0, 10);
     const weekday = (d.getDay() + 6) % 7;
-    const reqs = db.prepare(`
+    const reqs = await db.all(`
       SELECT sr.*, jr.name AS role_name, l.name AS location_name
       FROM staffing_requirements sr
       JOIN job_roles jr ON jr.id = sr.job_role_id
       JOIN locations l ON l.id = sr.location_id
       WHERE sr.organization_id = ? AND sr.weekday = ? AND sr.job_role_id = ?
-    `).all(orgId, weekday, user.job_role_id);
+    `, orgId, weekday, user.job_role_id);
     for (const r of reqs) {
       // Same-role colleagues scheduled that day in the band, excluding the requester.
-      const others = db.prepare(`
+      const others = (await db.get(`
         SELECT COUNT(*) AS n FROM shifts s JOIN users u ON u.id = s.user_id
         WHERE s.organization_id = ? AND s.date = ? AND s.user_id != ?
           AND u.job_role_id = ? AND s.start_time < ? AND ? < s.end_time
           AND (s.location_id IS NULL OR s.location_id = ?)
-      `).get(orgId, date, userId, user.job_role_id, r.end_time, r.start_time, r.location_id).n;
+      `, orgId, date, userId, user.job_role_id, r.end_time, r.start_time, r.location_id)).n;
       if (others < r.required_count) {
         impacts.push({
           date, location: r.location_name, role: r.role_name,

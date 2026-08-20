@@ -1,46 +1,61 @@
-// Seeds a realistic dental clinic on schema v2. Run: npm run seed
-// Recreates the database from scratch (dev/demo data only).
+// Seeds a realistic dental clinic (dev/demo data). Works on both drivers:
+//   npm run seed                     → local SQLite (recreates the file)
+//   DATABASE_URL=... npm run seed    → hosted PostgreSQL (clears + reseeds rows)
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbFile = process.env.TAPTIME_DB || path.join(__dirname, "taptime.db");
-for (const suffix of ["", "-wal", "-shm"]) {
-  try { fs.unlinkSync(dbFile + suffix); } catch { /* fresh */ }
+const usingPg = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+if (!usingPg) {
+  const dbFile = process.env.TAPTIME_DB || path.join(__dirname, "taptime.db");
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try { fs.unlinkSync(dbFile + suffix); } catch { /* fresh */ }
+  }
 }
 
-const { db } = await import("./db.js");
+const { db, insert } = await import("./db.js");
 const { hashPassword } = await import("./auth.js");
 const { todayStr, addDays, mondayOf, dateTimeIso, nowIso, businessDays, shiftMinutes, minutesBetween } =
   await import("./time.js");
 
+// Clear in reverse dependency order (needed on pg where the schema persists).
+const wipe = [
+  "audit_log", "notifications", "attendance_flags", "attendance_challenges",
+  "overtime", "leave_requests", "corrections", "breaks", "attendance", "shifts",
+  "kiosk_devices", "attendance_checkpoints", "devices", "sessions",
+  "employee_locations", "settings", "users", "staffing_requirements",
+  "departments", "job_roles", "locations", "organizations",
+];
+for (const t of wipe) await db.run(`DELETE FROM ${t}`);
+
 const now = nowIso();
 
 // --- organization ----------------------------------------------------------
-const orgId = db.prepare(`
+const orgId = await insert(`
   INSERT INTO organizations (name, slug, timezone, created_at, updated_at)
   VALUES ('Zâmbet Dental', 'zambet-dental', 'Europe/Bucharest', ?, ?)
-`).run(now, now).lastInsertRowid;
+`, now, now);
 
 // --- locations (real-ish Bucharest coordinates for geo checks) -------------
-const insLoc = db.prepare(`
+const addLoc = (name, address, lat, lng) => insert(`
   INSERT INTO locations (organization_id, name, address, latitude, longitude, attendance_radius_meters)
   VALUES (?, ?, ?, ?, ?, 150)
-`);
-const central = insLoc.run(orgId, "Central Clinic", "Str. Dorobanți 24, București", 44.4531, 26.0982).lastInsertRowid;
-const pipera = insLoc.run(orgId, "Pipera Clinic", "Bd. Pipera 41, București", 44.4972, 26.1213).lastInsertRowid;
+`, orgId, name, address, lat, lng);
+const central = await addLoc("Central Clinic", "Str. Dorobanți 24, București", 44.4531, 26.0982);
+const pipera = await addLoc("Pipera Clinic", "Bd. Pipera 41, București", 44.4972, 26.1213);
 
-// --- job roles (configurable, plan 2.3) ------------------------------------
-const insRole = db.prepare("INSERT INTO job_roles (organization_id, name) VALUES (?, ?)");
+// --- job roles & departments (configurable, plan 2.3) ----------------------
 const ROLE_NAMES = ["Dentist", "Dental Assistant", "Dental Hygienist", "Receptionist",
   "Clinic Manager", "Head Dentist", "Administrator", "Support Staff"];
 const roleId = {};
-for (const r of ROLE_NAMES) roleId[r] = insRole.run(orgId, r).lastInsertRowid;
-
-const insDept = db.prepare("INSERT INTO departments (organization_id, name) VALUES (?, ?)");
+for (const r of ROLE_NAMES) {
+  roleId[r] = await insert("INSERT INTO job_roles (organization_id, name) VALUES (?, ?)", orgId, r);
+}
 const deptId = {};
-for (const d of ["Clinical", "Front Desk", "Operations"]) deptId[d] = insDept.run(orgId, d).lastInsertRowid;
+for (const d of ["Clinical", "Front Desk", "Operations"]) {
+  deptId[d] = await insert("INSERT INTO departments (organization_id, name) VALUES (?, ?)", orgId, d);
+}
 const deptFor = (job) =>
   job === "Receptionist" ? deptId["Front Desk"]
   : ["Administrator", "Support Staff", "Clinic Manager"].includes(job) ? deptId.Operations
@@ -48,24 +63,23 @@ const deptFor = (job) =>
 
 // --- users -----------------------------------------------------------------
 const pw = hashPassword("taptime123");
-const insUser = db.prepare(`
-  INSERT INTO users (organization_id, first_name, last_name, email, phone, password_hash, pin, role,
-                     job_role_id, department_id, location_id, manager_id, employment_start, leave_balance)
-  VALUES (@org, @first, @last, @email, @phone, @hash, @pin, @role, @jobRole, @dept, @loc, @manager, '2023-03-01', 21)
-`);
-function addUser(u) {
-  return insUser.run({
-    org: orgId, hash: pw, manager: null,
-    phone: "07" + String(20000000 + Math.floor(Math.random() * 9999999)),
-    dept: deptFor(u.job), jobRole: roleId[u.job], ...u,
-  }).lastInsertRowid;
+function addUser({ first, last, email, pin, role, job, loc, manager = null }) {
+  return insert(`
+    INSERT INTO users (organization_id, first_name, last_name, email, phone, password_hash, pin, role,
+                       job_role_id, department_id, location_id, manager_id, employment_start, leave_balance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2023-03-01', 21)
+  `,
+    orgId, first, last, email,
+    "07" + String(20000000 + Math.floor(Math.random() * 9999999)),
+    pw, pin, role, roleId[job], deptFor(job), loc, manager
+  );
 }
 
-const admin = addUser({
+const admin = await addUser({
   first: "Ioana", last: "Vasilescu", email: "admin@taptime.app",
   pin: "0000", role: "admin", job: "Administrator", loc: central,
 });
-const manager = addUser({
+const manager = await addUser({
   first: "Andrei", last: "Popescu", email: "manager@taptime.app",
   pin: "1111", role: "manager", job: "Head Dentist", loc: central, manager: admin,
 });
@@ -83,60 +97,61 @@ const staff = [
   ["Diana", "Toma", "Receptionist", pipera, "5552"],
   ["Gheorghe", "Nistor", "Support Staff", central, "6661"],
 ];
-const staffIds = staff.map(([first, last, job, loc, pin]) =>
-  addUser({
+const staffIds = [];
+for (const [first, last, job, loc, pin] of staff) {
+  staffIds.push(await addUser({
     first, last, job, loc, pin, role: "employee", manager,
     email: `${first.toLowerCase()}.${last.toLowerCase()}@taptime.app`,
-  })
-);
+  }));
+}
 const everyone = [manager, ...staffIds];
 
 // A couple of people float between both clinics (plan Phase 3).
-const insEL = db.prepare("INSERT INTO employee_locations (user_id, location_id) VALUES (?, ?)");
-insEL.run(staffIds[0], pipera);   // Radu also works at Pipera
-insEL.run(staffIds[7], central);  // Larisa also works at Central
+await db.run("INSERT INTO employee_locations (user_id, location_id) VALUES (?, ?)", staffIds[0], pipera);
+await db.run("INSERT INTO employee_locations (user_id, location_id) VALUES (?, ?)", staffIds[7], central);
 
 // --- checkpoints & kiosks --------------------------------------------------
-const insCp = db.prepare(`
+const addCp = (loc, name, type, code) => db.run(`
   INSERT INTO attendance_checkpoints (organization_id, location_id, name, type, code)
   VALUES (?, ?, ?, ?, ?)
-`);
-insCp.run(orgId, central, "Main Entrance QR", "QR", "central-main");
-insCp.run(orgId, central, "Staff Entrance NFC", "NFC", "central-staff");
-insCp.run(orgId, pipera, "Reception QR", "QR", "pipera-main");
+`, orgId, loc, name, type, code);
+await addCp(central, "Main Entrance QR", "QR", "central-main");
+await addCp(central, "Staff Entrance NFC", "NFC", "central-staff");
+await addCp(pipera, "Reception QR", "QR", "pipera-main");
 
-db.prepare(`
+await db.run(`
   INSERT INTO kiosk_devices (organization_id, location_id, name, setup_code)
   VALUES (?, ?, 'Reception iPad — Central', 'DEMO1234')
-`).run(orgId, central);
-db.prepare(`
+`, orgId, central);
+await db.run(`
   INSERT INTO kiosk_devices (organization_id, location_id, name, setup_code)
   VALUES (?, ?, 'Reception iPad — Pipera', 'DEMO5678')
-`).run(orgId, pipera);
+`, orgId, pipera);
 
 // --- staffing requirements (weekdays, plan Phase 5) ------------------------
-const insReq = db.prepare(`
+const addReq = (loc, wd, start, end, role, count) => db.run(`
   INSERT INTO staffing_requirements (organization_id, location_id, weekday, start_time, end_time, job_role_id, required_count)
   VALUES (?, ?, ?, ?, ?, ?, ?)
-`);
+`, orgId, loc, wd, start, end, role, count);
 for (let wd = 0; wd < 5; wd++) {
-  insReq.run(orgId, central, wd, "08:00", "14:00", roleId["Dentist"], 2);
-  insReq.run(orgId, central, wd, "08:00", "14:00", roleId["Dental Assistant"], 2);
-  insReq.run(orgId, central, wd, "08:00", "20:00", roleId["Receptionist"], 1);
-  insReq.run(orgId, central, wd, "14:00", "20:00", roleId["Dentist"], 1);
-  insReq.run(orgId, pipera, wd, "08:00", "16:00", roleId["Dentist"], 1);
-  insReq.run(orgId, pipera, wd, "08:00", "16:00", roleId["Dental Assistant"], 1);
-  insReq.run(orgId, pipera, wd, "08:00", "16:00", roleId["Receptionist"], 1);
+  await addReq(central, wd, "08:00", "14:00", roleId["Dentist"], 2);
+  await addReq(central, wd, "08:00", "14:00", roleId["Dental Assistant"], 2);
+  await addReq(central, wd, "08:00", "20:00", roleId["Receptionist"], 1);
+  await addReq(central, wd, "14:00", "20:00", roleId["Dentist"], 1);
+  await addReq(pipera, wd, "08:00", "16:00", roleId["Dentist"], 1);
+  await addReq(pipera, wd, "08:00", "16:00", roleId["Dental Assistant"], 1);
+  await addReq(pipera, wd, "08:00", "16:00", roleId["Receptionist"], 1);
 }
 
 // --- shifts: 2 weeks back through 2 weeks ahead, Mon-Fri -------------------
-const insShift = db.prepare(`
-  INSERT INTO shifts (organization_id, user_id, date, start_time, end_time, location_id, job_role_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
-`);
-const userRow = db.prepare("SELECT * FROM users WHERE id = ?");
 const today = todayStr();
 const startMonday = addDays(mondayOf(today), -14);
+// Cache user rows — on hosted Postgres every query is a network round trip.
+const userCache = new Map();
+const userRow = async (id) => {
+  if (!userCache.has(id)) userCache.set(id, await db.get("SELECT * FROM users WHERE id = ?", id));
+  return userCache.get(id);
+};
 
 const patterns = {
   [roleId["Dentist"]]: [["08:00", "16:00"], ["10:00", "18:00"]],
@@ -150,34 +165,26 @@ const patterns = {
 for (let w = 0; w < 5; w++) {
   for (let d = 0; d < 5; d++) {
     const date = addDays(startMonday, w * 7 + d);
-    everyone.forEach((id, i) => {
-      if ((i + w) % 6 === d % 6 && d === (i % 5)) return; // weekly day off
-      const u = userRow.get(id);
+    for (let i = 0; i < everyone.length; i++) {
+      if ((i + w) % 6 === d % 6 && d === (i % 5)) continue; // weekly day off
+      const u = await userRow(everyone[i]);
       const opts = patterns[u.job_role_id] || [["08:00", "16:00"]];
       const [start, end] = opts[(i + d) % opts.length];
-      insShift.run(orgId, id, date, start, end, u.location_id, u.job_role_id);
-    });
+      await db.run(`
+        INSERT INTO shifts (organization_id, user_id, date, start_time, end_time, location_id, job_role_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, orgId, everyone[i], date, start, end, u.location_id, u.job_role_id);
+    }
   }
 }
 
 // --- past attendance with persisted totals ---------------------------------
-const insAtt = db.prepare(`
-  INSERT INTO attendance (organization_id, user_id, shift_id, date, clock_in, clock_out,
-                          clock_in_method, clock_out_method, location_id, status,
-                          worked_minutes, break_minutes, overtime_minutes, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)
-`);
-const insBreak = db.prepare("INSERT INTO breaks (attendance_id, start, end) VALUES (?, ?, ?)");
-const insOt = db.prepare(`
-  INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)
-  VALUES (?, ?, ?, ?, 'pending', ?)
-`);
 const jitter = (spread) => Math.floor(Math.random() * spread * 2) - spread;
 const shiftTime = (date, time, offsetMin) =>
   new Date(new Date(dateTimeIso(date, time)).getTime() + offsetMin * 60000).toISOString();
-
 const methods = ["WEB", "QR", "KIOSK", "WEB", "QR"];
-for (const s of db.prepare("SELECT * FROM shifts WHERE date < ?").all(today)) {
+
+for (const s of await db.all("SELECT * FROM shifts WHERE date < ?", today)) {
   const r = Math.random();
   if (r < 0.04) continue; // occasional absence
   const inIso = shiftTime(s.date, s.start_time, jitter(8));
@@ -190,62 +197,79 @@ for (const s of db.prepare("SELECT * FROM shifts WHERE date < ?").all(today)) {
   const worked = Math.max(0, minutesBetween(inIso, outIso) - brDur);
   const ot = Math.max(0, worked - shiftMinutes(s.start_time, s.end_time));
   const method = methods[Math.floor(Math.random() * methods.length)];
-  const attId = insAtt.run(
-    orgId, s.user_id, s.id, s.date, inIso, outIso, method, method,
-    s.location_id, worked, brDur, ot, inIso, outIso
-  ).lastInsertRowid;
-  insBreak.run(attId, brStart, brEnd);
-  if (overtime > 30) insOt.run(orgId, s.user_id, s.date, ot, nowIso());
+  const attId = await insert(`
+    INSERT INTO attendance (organization_id, user_id, shift_id, date, clock_in, clock_out,
+                            clock_in_method, clock_out_method, location_id, status,
+                            worked_minutes, break_minutes, overtime_minutes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)
+  `, orgId, s.user_id, s.id, s.date, inIso, outIso, method, method,
+    s.location_id, worked, brDur, ot, inIso, outIso);
+  await db.run("INSERT INTO breaks (attendance_id, start, ended_at) VALUES (?, ?, ?)", attId, brStart, brEnd);
+  if (overtime > 30) {
+    await db.run(`
+      INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?)
+    `, orgId, s.user_id, s.date, ot, nowIso());
+  }
 }
 
 // --- today: some clocked in, one on break, one flagged high-risk -----------
-const insOpenAtt = db.prepare(`
-  INSERT INTO attendance (organization_id, user_id, shift_id, date, clock_in, clock_in_method,
-                          location_id, status, risk_level, risk_signals, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-const todayShifts = db.prepare("SELECT * FROM shifts WHERE date = ?").all(today);
-todayShifts.forEach((s, i) => {
-  const startIso = dateTimeIso(s.date, s.start_time);
-  if (new Date(startIso) > new Date()) return;
-  if (i % 7 === 3) return; // late / absent
+const todayShifts = await db.all("SELECT * FROM shifts WHERE date = ?", today);
+for (let i = 0; i < todayShifts.length; i++) {
+  const s = todayShifts[i];
+  if (new Date(dateTimeIso(s.date, s.start_time)) > new Date()) continue;
+  if (i % 7 === 3) continue; // late / absent
   const inIso = shiftTime(s.date, s.start_time, jitter(6));
   const risky = i % 9 === 5;
-  const attId = insOpenAtt.run(
-    orgId, s.user_id, s.id, s.date, inIso, risky ? "WEB" : ["WEB", "QR", "KIOSK"][i % 3],
+  const attId = await insert(`
+    INSERT INTO attendance (organization_id, user_id, shift_id, date, clock_in, clock_in_method,
+                            location_id, status, risk_level, risk_signals, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, orgId, s.user_id, s.id, s.date, inIso, risky ? "WEB" : ["WEB", "QR", "KIOSK"][i % 3],
     s.location_id, risky ? "requires_review" : "working",
     risky ? "high" : "low", risky ? JSON.stringify(["location_mismatch:820m", "unknown_device"]) : "[]",
-    inIso, inIso
-  ).lastInsertRowid;
+    inIso, inIso);
   if (risky) {
-    db.prepare(`
+    await db.run(`
       INSERT INTO attendance_flags (organization_id, attendance_id, user_id, kind, detail, risk_level, created_at)
       VALUES (?, ?, ?, 'location_mismatch', '820m from Central Clinic, unknown device', 'high', ?)
-    `).run(orgId, attId, s.user_id, nowIso());
+    `, orgId, attId, s.user_id, nowIso());
   }
-  if (i % 5 === 2) insBreak.run(attId, new Date(Date.now() - 12 * 60000).toISOString(), null);
-});
+  if (i % 5 === 2) {
+    await db.run("INSERT INTO breaks (attendance_id, start) VALUES (?, ?)",
+      attId, new Date(Date.now() - 12 * 60000).toISOString());
+  }
+}
 
 // --- pending requests ------------------------------------------------------
-const insCorr = db.prepare(`
+await db.run(`
   INSERT INTO corrections (organization_id, user_id, date, kind, requested_in, requested_out, reason, status, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-`);
-insCorr.run(orgId, staffIds[3], addDays(today, -1), "missing_out", "", "16:05", "I forgot to clock out.", nowIso());
-insCorr.run(orgId, staffIds[8], addDays(today, -2), "missing_in", "07:55", "", "Terminal was busy, went straight to reception.", nowIso());
+  VALUES (?, ?, ?, 'missing_out', '', '16:05', 'I forgot to clock out.', 'pending', ?)
+`, orgId, staffIds[3], addDays(today, -1), nowIso());
+await db.run(`
+  INSERT INTO corrections (organization_id, user_id, date, kind, requested_in, requested_out, reason, status, created_at)
+  VALUES (?, ?, ?, 'missing_in', '07:55', '', 'Terminal was busy, went straight to reception.', 'pending', ?)
+`, orgId, staffIds[8], addDays(today, -2), nowIso());
 
-const insLeave = db.prepare(`
+const addLeave = (uid, type, s, e, days, note, status) => db.run(`
   INSERT INTO leave_requests (organization_id, user_id, type, start_date, end_date, days, note, status, created_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
+`, orgId, uid, type, s, e, days, note, status, nowIso());
 const l1s = addDays(today, 7), l1e = addDays(today, 9);
-insLeave.run(orgId, staffIds[8], "annual", l1s, l1e, businessDays(l1s, l1e), "Family trip", "pending", nowIso());
-const l2s = addDays(today, 3), l2e = addDays(today, 3);
-insLeave.run(orgId, staffIds[1], "personal", l2s, l2e, 1, "", "pending", nowIso());
+await addLeave(staffIds[8], "annual", l1s, l1e, businessDays(l1s, l1e), "Family trip", "pending");
+const l2s = addDays(today, 3);
+await addLeave(staffIds[1], "personal", l2s, l2s, 1, "", "pending");
 const l3s = addDays(today, -10), l3e = addDays(today, -8);
-insLeave.run(orgId, staffIds[5], "medical", l3s, l3e, businessDays(l3s, l3e), "Medical certificate attached", "approved", nowIso());
+await addLeave(staffIds[5], "medical", l3s, l3e, businessDays(l3s, l3e), "Medical certificate attached", "approved");
 
-console.log("Seeded TapTime v2 (org: Zâmbet Dental).");
+console.log(`Seeded TapTime (${usingPg ? "PostgreSQL" : "SQLite"}, org: Zâmbet Dental).`);
 console.log("Logins (password: taptime123): admin@taptime.app · manager@taptime.app · ana.georgescu@taptime.app");
 console.log("Kiosk setup codes: DEMO1234 (Central) · DEMO5678 (Pipera)");
 console.log("Checkpoint demo URL: /checkpoint/central-main");
+
+// Close only when run as a script (`npm run seed`); when imported (the Vercel
+// SQLite demo path) the server keeps using the same connection.
+import { pathToFileURL } from "url";
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await db.close();
+}

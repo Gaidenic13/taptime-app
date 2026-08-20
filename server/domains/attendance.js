@@ -2,7 +2,7 @@
 // All clock events flow through here regardless of method (WEB/QR/NFC/KIOSK).
 // The server is the authority: timestamps, validation, risk and status are
 // computed here inside transactions — never trusted from the client.
-import { db } from "../db.js";
+import { db, insert } from "../db.js";
 import { audit } from "../audit.js";
 import { getSettings } from "../settings.js";
 import { notifyManagers, notify } from "./notifications.js";
@@ -11,16 +11,19 @@ import {
   breakMinutes, workedMinutes,
 } from "../time.js";
 
-const q = {
-  attToday: db.prepare("SELECT * FROM attendance WHERE user_id = ? AND date = ?"),
-  breaksFor: db.prepare("SELECT * FROM breaks WHERE attendance_id = ? ORDER BY start"),
-  openBreak: db.prepare("SELECT * FROM breaks WHERE attendance_id = ? AND end IS NULL"),
-  shiftFor: db.prepare("SELECT * FROM shifts WHERE user_id = ? AND date = ? ORDER BY start_time LIMIT 1"),
-  leaveOn: db.prepare(
-    "SELECT * FROM leave_requests WHERE user_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= ?"
-  ),
-  location: db.prepare("SELECT * FROM locations WHERE id = ?"),
-};
+const attToday = (c, userId, date) =>
+  c.get("SELECT * FROM attendance WHERE user_id = ? AND date = ?", userId, date);
+const breaksFor = (c, attId) =>
+  c.all("SELECT * FROM breaks WHERE attendance_id = ? ORDER BY start", attId);
+const openBreak = (c, attId) =>
+  c.get("SELECT * FROM breaks WHERE attendance_id = ? AND ended_at IS NULL", attId);
+const shiftFor = (c, userId, date) =>
+  c.get("SELECT * FROM shifts WHERE user_id = ? AND date = ? ORDER BY start_time LIMIT 1", userId, date);
+const leaveOn = (c, userId, date) =>
+  c.get(
+    "SELECT * FROM leave_requests WHERE user_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= ?",
+    userId, date, date
+  );
 
 export function haversineMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
@@ -31,16 +34,18 @@ export function haversineMeters(lat1, lon1, lat2, lon2) {
 }
 
 // ---------------------------------------------------------------- status
-export function dayStatus(userId, date) {
-  const att = q.attToday.get(userId, date);
-  const shift = q.shiftFor.get(userId, date);
-  const onLeave = q.leaveOn.get(userId, date, date);
-  const breaks = att ? q.breaksFor.all(att.id) : [];
-  const open = att ? q.openBreak.get(att.id) : null;
-  const settings = att || shift
-    ? getSettings((att || {}).organization_id ||
-        db.prepare("SELECT organization_id FROM users WHERE id = ?").get(userId).organization_id)
-    : null;
+export async function dayStatus(userId, date) {
+  const att = await attToday(db, userId, date);
+  const shift = await shiftFor(db, userId, date);
+  const onLeave = await leaveOn(db, userId, date);
+  const breaks = att ? await breaksFor(db, att.id) : [];
+  const open = att ? await openBreak(db, att.id) : null;
+  let settings = null;
+  if (att || shift) {
+    const orgId = att?.organization_id ||
+      (await db.get("SELECT organization_id FROM users WHERE id = ?", userId)).organization_id;
+    settings = await getSettings(orgId);
+  }
 
   let status = "no_shift";
   if (onLeave) status = "leave";
@@ -68,7 +73,7 @@ export function dayStatus(userId, date) {
 // ---------------------------------------------------------------- risk (Phase 8)
 // Multi-signal evaluation. Returns { level, signals } — never a hard block by
 // itself; what happens to HIGH events is configurable (settings.high_risk_action).
-function assessClockIn({ user, shift, settings, method, viaCheckpoint, deviceKnown, geo, location }) {
+function assessClockIn({ shift, settings, method, viaCheckpoint, deviceKnown, geo, location }) {
   const signals = [];
 
   if (!shift) signals.push("no_shift");
@@ -81,12 +86,11 @@ function assessClockIn({ user, shift, settings, method, viaCheckpoint, deviceKno
 
   if (!deviceKnown && method !== "KIOSK") signals.push("unknown_device");
 
-  let locationOk = null; // null = not evaluated
   if (settings.location_mode !== "disabled" && location?.latitude != null && location?.longitude != null) {
     if (geo?.latitude != null && geo?.longitude != null) {
       const dist = haversineMeters(geo.latitude, geo.longitude, location.latitude, location.longitude);
-      locationOk = dist <= (location.attendance_radius_meters || 150) + (geo.accuracy || 0);
-      if (!locationOk) signals.push(`location_mismatch:${dist}m`);
+      const ok = dist <= (location.attendance_radius_meters || 150) + (geo.accuracy || 0);
+      if (!ok) signals.push(`location_mismatch:${dist}m`);
     } else if (settings.location_mode === "required") {
       signals.push("location_unavailable");
     } else if (settings.location_mode === "preferred") {
@@ -104,73 +108,72 @@ function assessClockIn({ user, shift, settings, method, viaCheckpoint, deviceKno
   return { level, signals };
 }
 
-function flag(orgId, { attendanceId = null, userId, kind, detail = "", risk = "medium" }) {
-  const info = db.prepare(`
+async function flag(orgId, { attendanceId = null, userId, kind, detail = "", risk = "medium" }) {
+  const id = await insert(`
     INSERT INTO attendance_flags (organization_id, attendance_id, user_id, kind, detail, risk_level, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(orgId, attendanceId, userId, kind, detail, risk, nowIso());
+  `, orgId, attendanceId, userId, kind, detail, risk, nowIso());
   if (risk === "high") {
-    const u = db.prepare("SELECT first_name, last_name FROM users WHERE id = ?").get(userId);
-    notifyManagers(orgId, "high_risk_attendance",
+    const u = await db.get("SELECT first_name, last_name FROM users WHERE id = ?", userId);
+    await notifyManagers(orgId, "high_risk_attendance",
       `High-risk attendance event — ${u.first_name} ${u.last_name}`,
       `${kind} ${detail}`.trim(), "/approvals");
   }
-  return info.lastInsertRowid;
+  return id;
 }
 
 // ---------------------------------------------------------------- clock in
-export function clockIn(user, {
+export async function clockIn(user, {
   method = "WEB", locationId = null, geo = null, viaCheckpoint = false, deviceKnown = true,
 } = {}) {
   const orgId = user.organization_id;
-  const settings = getSettings(orgId);
+  const settings = await getSettings(orgId);
   const date = todayStr();
-  const shift = q.shiftFor.get(user.id, date);
+  const shift = await shiftFor(db, user.id, date);
 
   if (settings.require_shift_to_clock_in && !shift) {
     throw new Error("You have no scheduled shift today — contact your manager");
   }
-  if (q.leaveOn.get(user.id, date, date)) {
+  if (await leaveOn(db, user.id, date)) {
     throw new Error("You are on approved leave today");
   }
 
   const locId = locationId || shift?.location_id || user.location_id;
-  const location = locId ? q.location.get(locId) : null;
+  const location = locId ? await db.get("SELECT * FROM locations WHERE id = ?", locId) : null;
   const { level, signals } = assessClockIn({
-    user, shift, settings, method, viaCheckpoint, deviceKnown, geo, location,
+    shift, settings, method, viaCheckpoint, deviceKnown, geo, location,
   });
 
   const status = level === "high" && settings.high_risk_action === "review" ? "requires_review" : "working";
 
   // Transaction + UNIQUE(user_id, date) make double clock-in impossible (Phase 22).
-  const run = db.transaction(() => {
-    if (q.attToday.get(user.id, date)) throw new Error("Already clocked in today");
-    const info = db.prepare(`
-      INSERT INTO attendance
-        (organization_id, user_id, shift_id, date, clock_in, clock_in_method, location_id,
-         status, risk_level, risk_signals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      orgId, user.id, shift?.id || null, date, nowIso(), method, locId,
-      status, level, JSON.stringify(signals), nowIso(), nowIso()
-    );
-    return info.lastInsertRowid;
-  });
   let attId;
   try {
-    attId = run();
+    attId = await db.tx(async (c) => {
+      if (await attToday(c, user.id, date)) throw new Error("Already clocked in today");
+      const row = await c.get(`
+        INSERT INTO attendance
+          (organization_id, user_id, shift_id, date, clock_in, clock_in_method, location_id,
+           status, risk_level, risk_signals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+      `,
+        orgId, user.id, shift?.id || null, date, nowIso(), method, locId,
+        status, level, JSON.stringify(signals), nowIso(), nowIso()
+      );
+      return row.id;
+    });
   } catch (e) {
-    if (String(e.message).includes("UNIQUE")) throw new Error("Already clocked in today");
+    if (/UNIQUE|duplicate key/i.test(String(e.message))) throw new Error("Already clocked in today");
     throw e;
   }
 
   if (level !== "low" && (level === "high" || settings.high_risk_action !== "accept")) {
-    flag(orgId, {
+    await flag(orgId, {
       attendanceId: attId, userId: user.id,
       kind: signals[0] || "risk", detail: signals.join(", "), risk: level,
     });
   }
-  audit({
+  await audit({
     orgId, actorId: user.id, action: "clock_in", entityType: "attendance", entityId: attId,
     next: { method, location_id: locId, risk: level, signals },
   });
@@ -178,60 +181,60 @@ export function clockIn(user, {
 }
 
 // ---------------------------------------------------------------- clock out
-export function clockOut(user, { method = "WEB", locationId = null } = {}) {
+export async function clockOut(user, { method = "WEB", locationId = null } = {}) {
   const orgId = user.organization_id;
-  const settings = getSettings(orgId);
+  const settings = await getSettings(orgId);
   const date = todayStr();
 
-  const result = db.transaction(() => {
-    const att = q.attToday.get(user.id, date);
+  const result = await db.tx(async (c) => {
+    const att = await attToday(c, user.id, date);
     if (!att?.clock_in) throw new Error("Not clocked in");
     if (att.clock_out) throw new Error("Already clocked out");
     const now = nowIso();
-    const open = q.openBreak.get(att.id);
-    if (open) db.prepare("UPDATE breaks SET end = ? WHERE id = ?").run(now, open.id);
+    const open = await openBreak(c, att.id);
+    if (open) await c.run("UPDATE breaks SET ended_at = ? WHERE id = ?", now, open.id);
 
-    const breaks = q.breaksFor.all(att.id);
+    const breaks = await breaksFor(c, att.id);
     const brMin = breakMinutes(breaks, now);
     const worked = Math.max(0, minutesBetween(att.clock_in, now) - brMin);
-    const shift = att.shift_id ? db.prepare("SELECT * FROM shifts WHERE id = ?").get(att.shift_id) : null;
+    const shift = att.shift_id ? await c.get("SELECT * FROM shifts WHERE id = ?", att.shift_id) : null;
     const scheduled = shift ? shiftMinutes(shift.start_time, shift.end_time) : null;
     const overtime = scheduled != null ? Math.max(0, worked - scheduled) : 0;
 
     const newStatus = att.status === "requires_review" ? "requires_review" : "completed";
-    db.prepare(`
+    await c.run(`
       UPDATE attendance SET clock_out = ?, clock_out_method = ?, status = ?,
         worked_minutes = ?, break_minutes = ?, overtime_minutes = ?, updated_at = ?
       WHERE id = ?
-    `).run(now, method, newStatus, worked, brMin, overtime, now, att.id);
+    `, now, method, newStatus, worked, brMin, overtime, now, att.id);
 
     if (overtime >= settings.overtime_threshold_min) {
-      db.prepare(`
+      await c.run(`
         INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)
         VALUES (?, ?, ?, ?, 'pending', ?)
-      `).run(orgId, user.id, date, overtime, now);
+      `, orgId, user.id, date, overtime, now);
     }
     return { att, worked, brMin, overtime, outLocation: locationId };
-  })();
+  });
 
   // Impossible transition check: clock-out from another location too soon (Phase 8.6).
   if (result.outLocation && result.att.location_id &&
       result.outLocation !== result.att.location_id &&
       minutesBetween(result.att.clock_in, nowIso()) < 20) {
-    flag(orgId, {
+    await flag(orgId, {
       attendanceId: result.att.id, userId: user.id, kind: "impossible_transition",
       detail: `in at location ${result.att.location_id}, out at ${result.outLocation} within 20min`,
       risk: "high",
     });
   }
-  if (result.brMin > getSettings(orgId).break_max_min) {
-    flag(orgId, {
+  if (result.brMin > settings.break_max_min) {
+    await flag(orgId, {
       attendanceId: result.att.id, userId: user.id, kind: "long_break",
       detail: `${result.brMin} min of breaks`, risk: "medium",
     });
   }
 
-  audit({
+  await audit({
     orgId, actorId: user.id, action: "clock_out", entityType: "attendance", entityId: result.att.id,
     next: { method, worked_minutes: result.worked, overtime_minutes: result.overtime },
   });
@@ -239,44 +242,43 @@ export function clockOut(user, { method = "WEB", locationId = null } = {}) {
 }
 
 // ---------------------------------------------------------------- breaks (Phase 9)
-export function breakAction(user, action) {
+export async function breakAction(user, action) {
   const date = todayStr();
-  db.transaction(() => {
-    const att = q.attToday.get(user.id, date);
+  await db.tx(async (c) => {
+    const att = await attToday(c, user.id, date);
     if (!att?.clock_in || att.clock_out) throw new Error("Not currently working");
-    const open = q.openBreak.get(att.id);
+    const open = await openBreak(c, att.id);
     if (action === "start") {
       if (open) throw new Error("Break already running");
-      db.prepare("INSERT INTO breaks (attendance_id, start) VALUES (?, ?)").run(att.id, nowIso());
+      await c.run("INSERT INTO breaks (attendance_id, start) VALUES (?, ?)", att.id, nowIso());
     } else {
       if (!open) throw new Error("No break running");
-      db.prepare("UPDATE breaks SET end = ? WHERE id = ?").run(nowIso(), open.id);
+      await c.run("UPDATE breaks SET ended_at = ? WHERE id = ?", nowIso(), open.id);
     }
-  })();
-  audit({ orgId: user.organization_id, actorId: user.id, action: `break_${action}` });
+  });
+  await audit({ orgId: user.organization_id, actorId: user.id, action: `break_${action}` });
   return dayStatus(user.id, date);
 }
 
 // ---------------------------------------------------------------- review queue
-export function resolveReview(reviewer, attendanceId, decision, note = "") {
-  const att = db.prepare("SELECT * FROM attendance WHERE id = ?").get(attendanceId);
+export async function resolveReview(reviewer, attendanceId, decision, note = "") {
+  const att = await db.get("SELECT * FROM attendance WHERE id = ?", attendanceId);
   if (!att || att.organization_id !== reviewer.organization_id) throw new Error("Record not found");
   if (att.status !== "requires_review") throw new Error("Record is not awaiting review");
 
   const newStatus = decision === "approved" ? (att.clock_out ? "completed" : "working") : "rejected";
-  db.prepare("UPDATE attendance SET status = ?, updated_at = ? WHERE id = ?")
-    .run(newStatus, nowIso(), att.id);
-  db.prepare(`
+  await db.run("UPDATE attendance SET status = ?, updated_at = ? WHERE id = ?", newStatus, nowIso(), att.id);
+  await db.run(`
     UPDATE attendance_flags SET status = 'resolved', resolved_by = ?, resolution_note = ?, resolved_at = ?
     WHERE attendance_id = ? AND status = 'open'
-  `).run(reviewer.id, note, nowIso(), att.id);
+  `, reviewer.id, note, nowIso(), att.id);
 
-  audit({
+  await audit({
     orgId: att.organization_id, actorId: reviewer.id, action: `attendance_review_${decision}`,
     entityType: "attendance", entityId: att.id,
     previous: { status: att.status }, next: { status: newStatus, note },
   });
-  notify(att.organization_id, att.user_id, "attendance_review",
+  await notify(att.organization_id, att.user_id, "attendance_review",
     decision === "approved" ? "Your attendance was verified" : "An attendance record was rejected",
     note, "/attendance");
 }

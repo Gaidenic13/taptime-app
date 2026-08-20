@@ -50,10 +50,12 @@ do not over-engineer the MVP; keep the application deployable throughout.*
 - **Stay on Vite+React+Express (not Next.js) for now.** The app is one SPA + one
   API; the domain-module refactor gives the clean boundaries the plan wants.
   A Next.js migration would be a rewrite with no user-facing gain at this stage.
-- **Stay on SQLite (not PostgreSQL) for now.** Single-clinic deployment; the
-  schema is written portable (no SQLite-isms in business logic) so a Prisma/
-  Postgres migration is mechanical when multi-tenant SaaS goes live. WAL +
-  transactions cover current integrity needs.
+- **PostgreSQL in production, SQLite for dev/tests** *(updated 2026-08-20 —
+  the Postgres migration shipped)*: `server/db.js` is a dual-driver async
+  adapter — better-sqlite3 with zero setup locally, node-postgres (Neon via
+  Vercel Marketplace) whenever `DATABASE_URL` is set. SQL is written once;
+  the adapter converts placeholders and the two DDL dialect differences
+  (AUTOINCREMENT→SERIAL, int8/numeric parsing).
 - **Passkeys/WebAuthn deferred** to the security phase after checkpoints are in;
   the challenge/risk engine is built so a passkey check slots in as one more
   identity signal. Fallbacks (session + kiosk PIN) are in place.

@@ -19,10 +19,15 @@ for the plan-vs-implementation mapping and technology decisions.
 
 - **Frontend:** React 18 + Vite + react-router — one responsive app (mobile
   tab bar / desktop sidebar), PWA-ready (manifest + installable)
-- **Backend:** Express with domain modules (`server/domains/`) + better-sqlite3;
-  scrypt hashing, bearer sessions, org-scoped RBAC enforced server-side
+- **Backend:** Express with domain modules (`server/domains/`); scrypt hashing,
+  bearer sessions, org-scoped RBAC enforced server-side
+- **Database:** dual-driver async adapter ([server/db.js](server/db.js)) —
+  SQLite (better-sqlite3) with zero setup for local dev/tests, **PostgreSQL**
+  (node-postgres) whenever `DATABASE_URL`/`POSTGRES_URL` is set. Production on
+  Vercel runs against Neon Postgres, so data persists.
 - **Tests:** `npm test` — node:test suite over the attendance engine, security
-  isolation, challenges and scheduling conflicts on an isolated temp DB
+  isolation, challenges and scheduling conflicts; runs on SQLite by default or
+  against Postgres when `DATABASE_URL` is set
 
 ## Run it
 
@@ -32,6 +37,12 @@ npm run seed     # wipes & seeds the demo clinic (org: Zâmbet Dental)
 npm run dev      # API on :4180 (env API_PORT), app on :4181
 npm test         # business-logic test suite
 ```
+
+**Deployment** (Vercel, auto-deploys on push to `main`): the serverless entry
+is [api/index.js](api/index.js). With `DATABASE_URL` set (Neon Postgres via the
+Vercel Marketplace) data persists; without it the app falls back to a
+self-resetting SQLite demo in `/tmp`. Reseed production with
+`DATABASE_URL=... npm run seed` (pull the URL via `npx vercel env pull`).
 
 ## Demo logins (password for all: `taptime123`)
 

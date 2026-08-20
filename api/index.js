@@ -1,14 +1,19 @@
 // Vercel serverless entry: wraps the Express app.
-// Vercel's filesystem is read-only except /tmp, and /tmp is ephemeral per
-// instance — so this deployment runs as a self-resetting DEMO: the SQLite
-// database is seeded into /tmp on every cold start. Real persistence is the
-// planned PostgreSQL migration (docs/AUDIT.md).
+//
+// With DATABASE_URL (or POSTGRES_URL) set, the app runs against persistent
+// PostgreSQL — seed it once with `DATABASE_URL=... npm run seed`.
+//
+// Without it, this falls back to a self-resetting SQLite demo: /tmp is
+// ephemeral per instance, so the database is reseeded on every cold start.
 import fs from "fs";
 
-process.env.TAPTIME_DB = "/tmp/taptime.db";
+const hasPg = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
 
-if (!fs.existsSync(process.env.TAPTIME_DB)) {
-  await import("../server/seed.js");
+if (!hasPg) {
+  process.env.TAPTIME_DB = "/tmp/taptime.db";
+  if (!fs.existsSync(process.env.TAPTIME_DB)) {
+    await import("../server/seed.js");
+  }
 }
 
 const { app } = await import("../server/index.js");

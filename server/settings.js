@@ -13,8 +13,8 @@ export const DEFAULT_SETTINGS = {
   break_max_min: 90,           // breaks longer than this get flagged
 };
 
-export function getSettings(orgId) {
-  const rows = db.prepare("SELECT key, value FROM settings WHERE organization_id = ?").all(orgId);
+export async function getSettings(orgId) {
+  const rows = await db.all("SELECT key, value FROM settings WHERE organization_id = ?", orgId);
   const merged = { ...DEFAULT_SETTINGS };
   for (const r of rows) {
     try { merged[r.key] = JSON.parse(r.value); } catch { /* skip bad rows */ }
@@ -22,10 +22,10 @@ export function getSettings(orgId) {
   return merged;
 }
 
-export function setSetting(orgId, key, value) {
+export async function setSetting(orgId, key, value) {
   if (!(key in DEFAULT_SETTINGS)) throw new Error(`Unknown setting: ${key}`);
-  db.prepare(`
+  await db.run(`
     INSERT INTO settings (organization_id, key, value) VALUES (?, ?, ?)
-    ON CONFLICT(organization_id, key) DO UPDATE SET value = excluded.value
-  `).run(orgId, key, JSON.stringify(value));
+    ON CONFLICT (organization_id, key) DO UPDATE SET value = excluded.value
+  `, orgId, key, JSON.stringify(value));
 }

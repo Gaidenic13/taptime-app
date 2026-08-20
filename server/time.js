@@ -36,7 +36,7 @@ export function shiftMinutes(startTime, endTime) {
 
 export function breakMinutes(breaks, fallbackEnd = nowIso()) {
   return breaks.reduce(
-    (sum, b) => sum + Math.max(0, minutesBetween(b.start, b.end || fallbackEnd)),
+    (sum, b) => sum + Math.max(0, minutesBetween(b.start, b.ended_at || fallbackEnd)),
     0
   );
 }
