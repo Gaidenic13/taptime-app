@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite-cache/
+.vercel/
+server/taptime.db
+server/taptime.db-wal
+server/taptime.db-shm
+*.log
+.DS_Store

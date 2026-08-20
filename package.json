@@ -1,0 +1,29 @@
+{
+  "name": "taptime-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TapTime — internal workforce & clinic operations app (mobile + desktop)",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "node server/index.js",
+    "dev:web": "vite",
+    "seed": "node server/seed.js",
+    "build": "vite build",
+    "test": "node --test server/tests/engine.test.js",
+    "start": "NODE_ENV=production node server/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^5.4.19"
+  }
+}

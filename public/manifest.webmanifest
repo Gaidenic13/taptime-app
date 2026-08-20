@@ -1,0 +1,12 @@
+{
+  "name": "TapTime — Workforce & Clinic Operations",
+  "short_name": "TapTime",
+  "description": "Attendance, scheduling and clinic operations for dental teams",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f3fb",
+  "theme_color": "#5b4bdb",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
