@@ -7,3 +7,5 @@ server/taptime.db-wal
 server/taptime.db-shm
 *.log
 .DS_Store
+.vercel
+.env*
