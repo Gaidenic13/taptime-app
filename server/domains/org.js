@@ -65,8 +65,8 @@ export async function createOrganization(
 // Scanning the fresh tag → claim form → this call: verifies the pair, creates
 // the clinic, and binds the tag's code as its checkpoint. The physical tag
 // never needs rewriting.
-export async function claimTag({ tag_code, claim_code, ...signup }) {
-  const tag = await verifyUnclaimedTag(tag_code, claim_code);
+export async function claimTag({ tag_code, claim_code: _ignored, ...signup }) {
+  const tag = await verifyUnclaimedTag(tag_code);
   const result = await createOrganization(signup, { checkpointCode: tag.code });
   await db.run(
     "UPDATE provisioned_tags SET organization_id = ?, claimed_at = ? WHERE id = ?",
@@ -79,17 +79,14 @@ export async function claimTag({ tag_code, claim_code, ...signup }) {
   return result;
 }
 
-// Shared: verify the box's setup code matches an unclaimed tag.
-async function verifyUnclaimedTag(tag_code, claim_code) {
-  const clean = String(claim_code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Shared: the tag must exist and still be unclaimed. First claim wins —
+// no setup code, by product decision (boxes go hand-delivered to clinics).
+async function verifyUnclaimedTag(tag_code) {
   const tag = await db.get(
     "SELECT * FROM provisioned_tags WHERE code = ?", String(tag_code || "").trim()
   );
   if (!tag) throw new Error("This tag is not recognized");
   if (tag.organization_id) throw new Error("This tag is already linked to a clinic");
-  if (clean !== tag.claim_code.replace(/[^A-Z0-9]/g, "")) {
-    throw new Error("Setup code doesn't match this tag — check the card in your box");
-  }
   return tag;
 }
 
@@ -119,10 +116,10 @@ async function bindTagToOrg(admin, tag) {
 }
 
 // A clinic buying ANOTHER TapTime attaches it to the clinic it already has:
-// the setup code proves possession of the box, admin credentials (or an
-// existing admin session, see the route) prove ownership of the clinic.
-export async function attachTag({ tag_code, claim_code, email, password }) {
-  const tag = await verifyUnclaimedTag(tag_code, claim_code);
+// admin credentials (or an existing admin session, see the route) prove
+// ownership of the clinic.
+export async function attachTag({ tag_code, email, password }) {
+  const tag = await verifyUnclaimedTag(tag_code);
   const { verifyPassword } = await import("../auth.js");
   const admin = await db.get(
     "SELECT * FROM users WHERE email = ? AND active = 1", String(email || "").trim().toLowerCase()
@@ -133,9 +130,9 @@ export async function attachTag({ tag_code, claim_code, email, password }) {
   return bindTagToOrg(admin, tag);
 }
 
-// Admin already signed in on the scanning phone: setup code alone suffices.
-export async function attachTagAsAdmin(admin, { tag_code, claim_code }) {
-  const tag = await verifyUnclaimedTag(tag_code, claim_code);
+// Admin already signed in on the scanning phone: one tap, nothing to type.
+export async function attachTagAsAdmin(admin, { tag_code }) {
+  const tag = await verifyUnclaimedTag(tag_code);
   return bindTagToOrg(admin, tag);
 }
 

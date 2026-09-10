@@ -242,24 +242,23 @@ test("signup provisions org + admin + checkpoint; quick-add members scan without
   assert.equal(r.today.status, "working");
 });
 
-test("pre-written tag: claim binds org, wrong/duplicate claims rejected, scans record the device", async () => {
+test("pre-written tag: claim binds org, duplicate claims rejected, scans record the device", async () => {
   const { claimTag, makeClaimCode, quickAddMember } = await import("../domains/org.js");
   const { touchDevice } = await import("../auth.js");
-  const claim = makeClaimCode();
   await db.run(
     "INSERT INTO provisioned_tags (claim_code, code, created_at) VALUES (?, 'tag-abc-123', ?)",
-    claim, new Date().toISOString()
+    makeClaimCode(), new Date().toISOString()
   );
 
-  // Wrong setup code rejected.
+  // Unknown tag rejected.
   await assert.rejects(claimTag({
-    tag_code: "tag-abc-123", claim_code: "XXXX-XXXX",
+    tag_code: "no-such-tag",
     clinic_name: "Boxed Clinic", first_name: "B", last_name: "Ox", email: "box@t.test", password: "secret1",
-  }), /doesn't match/);
+  }), /not recognized/);
 
-  // Correct claim provisions the org and binds the tag's code as checkpoint.
+  // First claim wins: provisions the org and binds the tag's code as checkpoint.
   const s = await claimTag({
-    tag_code: "tag-abc-123", claim_code: claim.toLowerCase(),
+    tag_code: "tag-abc-123",
     clinic_name: "Boxed Clinic", first_name: "B", last_name: "Ox", email: "box@t.test", password: "secret1",
   });
   const cp = await db.get("SELECT * FROM attendance_checkpoints WHERE code = 'tag-abc-123'");
@@ -267,7 +266,7 @@ test("pre-written tag: claim binds org, wrong/duplicate claims rejected, scans r
 
   // Second claim of the same tag rejected.
   await assert.rejects(claimTag({
-    tag_code: "tag-abc-123", claim_code: claim,
+    tag_code: "tag-abc-123",
     clinic_name: "X", first_name: "A", last_name: "B", email: "x2@t.test", password: "secret1",
   }), /already linked/);
 
@@ -282,20 +281,19 @@ test("pre-written tag: claim binds org, wrong/duplicate claims rejected, scans r
 
 test("second tag attaches to the SAME clinic as another entrance", async () => {
   const { attachTag, attachTagAsAdmin, makeClaimCode } = await import("../domains/org.js");
-  const claim2 = makeClaimCode();
   await db.run(
     "INSERT INTO provisioned_tags (claim_code, code, created_at) VALUES (?, 'tag-second-door', ?)",
-    claim2, new Date().toISOString()
+    makeClaimCode(), new Date().toISOString()
   );
   const admin = await db.get("SELECT * FROM users WHERE email = 'box@t.test'");
 
-  // Wrong password rejected; non-admin rejected.
+  // Wrong password rejected.
   await assert.rejects(attachTag({
-    tag_code: "tag-second-door", claim_code: claim2, email: "box@t.test", password: "wrong",
+    tag_code: "tag-second-door", email: "box@t.test", password: "wrong",
   }), /Invalid email or password/);
 
-  // Session-based attach: setup code alone.
-  const res = await attachTagAsAdmin(admin, { tag_code: "tag-second-door", claim_code: claim2 });
+  // Session-based attach: nothing but the tag itself.
+  const res = await attachTagAsAdmin(admin, { tag_code: "tag-second-door" });
   assert.equal(res.clinic, "Boxed Clinic");
   assert.match(res.checkpoint.name, /Entrance 2/);
 
@@ -308,7 +306,7 @@ test("second tag attaches to the SAME clinic as another entrance", async () => {
   // And the second tag cannot be claimed as a new clinic anymore.
   const { claimTag } = await import("../domains/org.js");
   await assert.rejects(claimTag({
-    tag_code: "tag-second-door", claim_code: claim2,
+    tag_code: "tag-second-door",
     clinic_name: "X", first_name: "A", last_name: "B", email: "x9@t.test", password: "secret1",
   }), /already linked/);
 });

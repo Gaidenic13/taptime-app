@@ -16,7 +16,7 @@ function ClaimForm({ code }) {
   const navigate = useNavigate();
   const adminSession = user && (user.role === "admin" || user.role === "owner");
   const [mode, setMode] = useState("new"); // new | existing
-  const [form, setForm] = useState({ claim_code: "", clinic_name: "", first_name: "", last_name: "", email: "", password: "" });
+  const [form, setForm] = useState({ clinic_name: "", first_name: "", last_name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [attached, setAttached] = useState(null); // { name, clinic }
@@ -41,10 +41,10 @@ function ClaimForm({ code }) {
     setError(""); setBusy(true);
     try {
       const d = adminSession
-        ? await api("/orgs/attach-session", { method: "POST", body: { tag_code: code, claim_code: form.claim_code } })
+        ? await api("/orgs/attach-session", { method: "POST", body: { tag_code: code } })
         : await api("/orgs/attach", {
             method: "POST",
-            body: { tag_code: code, claim_code: form.claim_code, email: form.email, password: form.password },
+            body: { tag_code: code, email: form.email, password: form.password },
           });
       setAttached({ name: d.checkpoint.name, clinic: d.clinic });
     } catch (err) {
@@ -62,15 +62,12 @@ function ClaimForm({ code }) {
     );
   }
 
-  // Admin already signed in on this phone: one field, one button.
+  // Admin already signed in on this phone: nothing to type — one confirm tap.
   if (adminSession) {
     return (
-      <form onSubmit={submitAttach} style={{ textAlign: "left", marginTop: 8 }}>
-        <h2 style={{ textAlign: "center" }}>{t("cp.claimExisting")}</h2>
-        <label className="field"><span>{t("cp.claimCode")}</span>
-          <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required autoFocus
-            style={{ textAlign: "center", letterSpacing: "0.15em", fontWeight: 600, textTransform: "uppercase" }} />
-        </label>
+      <form onSubmit={submitAttach} style={{ marginTop: 8 }}>
+        <h2>{t("cp.claimExisting")}</h2>
+        <p className="muted small">{t("cp.attachSub")}</p>
         {error && <div className="error-box">{error}</div>}
         <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.attachBtn")}</button>
       </form>
@@ -87,10 +84,6 @@ function ClaimForm({ code }) {
         <button type="button" className={mode === "existing" ? "active" : ""} style={{ flex: 1 }}
           onClick={() => setMode("existing")}>{t("cp.claimExisting")}</button>
       </div>
-      <label className="field"><span>{t("cp.claimCode")}</span>
-        <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required
-          style={{ textAlign: "center", letterSpacing: "0.15em", fontWeight: 600, textTransform: "uppercase" }} />
-      </label>
       {mode === "new" && (
         <>
           <label className="field"><span>{t("signup.clinic")}</span>
