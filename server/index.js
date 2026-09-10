@@ -19,7 +19,8 @@ import {
   checkpointByCode, createChallenge, consumeChallenge, createCheckpoint, createKiosk, resetKiosk,
 } from "./domains/checkpoints.js";
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
-import { createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember } from "./domains/org.js";
+import { createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember, makeClaimCode } from "./domains/org.js";
+import crypto from "crypto";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
 
@@ -44,6 +45,47 @@ const handle = (fn) => async (req, res) => {
     res.status(e.status || 400).json({ error: e.message });
   }
 };
+
+// ---------------------------------------------------------------- factory (vendor)
+// The vendor's production floor: mint tags, see inventory & claim status.
+// Guarded by FACTORY_KEY (X-Factory-Key header); a fixed dev key applies
+// locally so the page works out of the box during development.
+const factoryKey = () =>
+  process.env.FACTORY_KEY || (!process.env.VERCEL ? "dev-factory" : null);
+
+const requireFactory = (req, res, next) => {
+  const key = factoryKey();
+  if (!key) return res.status(503).json({ error: "Factory is not configured on this deployment" });
+  if ((req.headers["x-factory-key"] || "") !== key) {
+    return res.status(401).json({ error: "Invalid factory key" });
+  }
+  next();
+};
+
+app.post("/api/factory/tags", requireFactory, handle(async (req) => {
+  const count = Math.min(50, Math.max(1, Number(req.body?.count) || 1));
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const code = crypto.randomBytes(8).toString("hex");
+    await db.run(
+      "INSERT INTO provisioned_tags (claim_code, code, created_at) VALUES (?, ?, ?)",
+      makeClaimCode(), code, new Date().toISOString()
+    );
+    codes.push(code);
+  }
+  return { codes };
+}));
+
+app.get("/api/factory/tags", requireFactory, handle(async () => ({
+  tags: await db.all(`
+    SELECT pt.id, pt.code, pt.created_at, pt.claimed_at,
+           o.name AS clinic, cp.name AS entrance
+    FROM provisioned_tags pt
+    LEFT JOIN organizations o ON o.id = pt.organization_id
+    LEFT JOIN attendance_checkpoints cp ON cp.code = pt.code
+    ORDER BY pt.id DESC LIMIT 100
+  `),
+})));
 
 // ---------------------------------------------------------------- signup (self-serve)
 app.post("/api/orgs/signup", handle(async (req) => createOrganization(req.body || {})));
@@ -138,7 +180,7 @@ app.post("/api/checkpoint/consume", requireAuth, handle(async (req) => {
   return {
     today: await clockIn(req.user, {
       method: cp.type, locationId: cp.location_id, geo: geo || null,
-      viaCheckpoint: true, deviceKnown: known, deviceId,
+      viaCheckpoint: true, deviceKnown: known, deviceId, checkpointId: cp.id,
     }),
   };
 }));
@@ -174,6 +216,7 @@ app.post("/api/checkpoint/pin", handle(async (req) => {
   const { known, deviceId } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
   const result = await tapToggle(user, {
     method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
+    checkpointId: cp.id,
   });
   // Activation: the code is entered once — the phone gets a persistent member
   // session, so every later scan records in/out with no typing at all.
@@ -190,6 +233,7 @@ app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   const result = await tapToggle(req.user, {
     method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
+    checkpointId: cp.id,
   });
   return { user: { first_name: req.user.first_name }, ...result };
 }));
@@ -318,6 +362,12 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
     WHERE u.organization_id = ? AND u.active = 1 ${locationId ? "AND u.location_id = ?" : ""}
     ORDER BY jr.name, u.last_name
   `, ...(locationId ? [req.orgId, locationId] : [req.orgId]));
+  // Entrance names shown per session, but only when the clinic has several.
+  const cps = await db.all(
+    "SELECT id, name FROM attendance_checkpoints WHERE organization_id = ?", req.orgId
+  );
+  const cpName = cps.length > 1 ? new Map(cps.map((c) => [c.id, c.name])) : null;
+
   const roster = [];
   for (const u of users) {
     const d = await dayStatus(u.id, date);
@@ -333,6 +383,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
       sessions: d.sessions.map((s) => ({
         in: s.clock_in, out: s.clock_out, method: s.clock_in_method,
         device_id: s.device_id || null,
+        entrance: (cpName && s.checkpoint_id && cpName.get(s.checkpoint_id)) || null,
         minutes: s.clock_out ? s.worked_minutes : null,
       })),
     });
@@ -524,6 +575,19 @@ app.get("/api/admin/checkpoints", requireAuth, requireAdmin, handle(async (req) 
   `, req.orgId),
 })));
 app.post("/api/admin/checkpoints", requireAuth, requireAdmin, handle(async (req) => createCheckpoint(req.user, req.body || {})));
+app.patch("/api/admin/checkpoints/:id", requireAuth, requireAdmin, handle(async (req) => {
+  const cp = await db.get("SELECT * FROM attendance_checkpoints WHERE id = ?", req.params.id);
+  if (!cp || cp.organization_id !== req.orgId) throw new Error("Checkpoint not found");
+  const name = String(req.body?.name || "").trim();
+  if (!name) throw new Error("Name required");
+  await db.run("UPDATE attendance_checkpoints SET name = ? WHERE id = ?", name, cp.id);
+  await audit({
+    orgId: req.orgId, actorId: req.user.id, action: "checkpoint_rename",
+    entityType: "attendance_checkpoint", entityId: cp.id,
+    previous: { name: cp.name }, next: { name },
+  });
+  return { ok: true };
+}));
 app.post("/api/admin/kiosks", requireAuth, requireAdmin, handle(async (req) => createKiosk(req.user, req.body || {})));
 app.post("/api/admin/kiosks/:id/reset", requireAuth, requireAdmin, handle(async (req) => resetKiosk(req.user, Number(req.params.id))));
 

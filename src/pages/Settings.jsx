@@ -199,9 +199,22 @@ function Checkpoints({ directory, kind }) {
           <p className="small muted">{t("set.cpSub")}</p>
           {data.checkpoints.map((c) => (
             <div className="list-item spread" key={c.id}>
-              <div>
-                <strong>{c.name}</strong> <span className="pill no_shift">{c.type}</span>
-                <div className="small muted">{c.location_name} · {origin}/checkpoint/{c.code}</div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div className="row">
+                  <input
+                    defaultValue={c.name}
+                    style={{ maxWidth: 200, padding: "7px 10px", fontWeight: 600 }}
+                    onBlur={async (e) => {
+                      const name = e.target.value.trim();
+                      if (name && name !== c.name) {
+                        await api(`/admin/checkpoints/${c.id}`, { method: "PATCH", body: { name } });
+                        load();
+                      }
+                    }}
+                  />
+                  <span className="pill no_shift">{c.type}</span>
+                </div>
+                <div className="small muted" style={{ marginTop: 6 }}>{c.location_name} · {origin}/checkpoint/{c.code}</div>
               </div>
               <QrImg url={`${origin}/checkpoint/${c.code}`} />
             </div>

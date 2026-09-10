@@ -150,7 +150,7 @@ async function flag(orgId, { attendanceId = null, userId, kind, detail = "", ris
 // ---------------------------------------------------------------- check in
 export async function clockIn(user, {
   method = "WEB", locationId = null, geo = null, viaCheckpoint = false, deviceKnown = true,
-  deviceId = null,
+  deviceId = null, checkpointId = null,
 } = {}) {
   const orgId = user.organization_id;
   const settings = await getSettings(orgId);
@@ -184,11 +184,11 @@ export async function clockIn(user, {
       const row = await c.get(`
         INSERT INTO attendance
           (organization_id, user_id, shift_id, date, clock_in, clock_in_method, location_id,
-           status, risk_level, risk_signals, device_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+           status, risk_level, risk_signals, device_id, checkpoint_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
       `,
         orgId, user.id, shift?.id || null, date, nowIso(), method, locId,
-        status, level, JSON.stringify(signals), deviceId, nowIso(), nowIso()
+        status, level, JSON.stringify(signals), deviceId, checkpointId, nowIso(), nowIso()
       );
       return row.id;
     });
@@ -303,12 +303,12 @@ export async function breakAction(user, action) {
 // One-gesture attendance: a scan checks you in if you're out, out if you're in.
 // A scan within 2 minutes of checking in is treated as an accidental double
 // tap. There is no daily limit — scan as many times as you come and go.
-export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true, deviceId = null } = {}) {
+export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true, deviceId = null, checkpointId = null } = {}) {
   const open = await openSession(db, user.id);
   if (!open) {
     return {
       did: "in",
-      today: await clockIn(user, { method, locationId, geo, viaCheckpoint: true, deviceKnown, deviceId }),
+      today: await clockIn(user, { method, locationId, geo, viaCheckpoint: true, deviceKnown, deviceId, checkpointId }),
     };
   }
   if (minutesBetween(open.clock_in, nowIso()) < 2) {

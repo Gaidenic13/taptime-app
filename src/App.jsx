@@ -7,6 +7,7 @@ import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import Setup from "./pages/Setup.jsx";
 import Terminal from "./pages/Terminal.jsx";
+import Factory from "./pages/Factory.jsx";
 import Checkpoint from "./pages/Checkpoint.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import MyAttendance from "./pages/MyAttendance.jsx";
@@ -168,6 +169,7 @@ function AppInner() {
   const ctx = { user, login, logout, adoptSession, pendingCount, refreshPending };
 
   if (location.pathname === "/terminal") return <Terminal />;
+  if (location.pathname === "/factory") return <Factory />;
   if (loading) return null;
   if (location.pathname.startsWith("/checkpoint/")) {
     return (

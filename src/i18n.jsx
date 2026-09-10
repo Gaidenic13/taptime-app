@@ -223,6 +223,16 @@ const dict = {
     "cp.attached": "Done — this tag is now \"{name}\" at {clinic}. Employees can scan it right away.",
     "setup.tagReady": "Your tag is already written and linked to this clinic — nothing to write. Print this QR as a backup poster if you like.",
     "days.device": "phone",
+    "factory.title": "TapTime Factory",
+    "factory.heading": "Production floor",
+    "factory.sub": "Mint one TapTime per physical unit, write its link to the tag, box it. Rows turn green when a clinic claims them.",
+    "factory.key": "Factory key",
+    "factory.mint": "Generate TapTime(s)",
+    "factory.freshTitle": "Just minted — write these to the tags",
+    "factory.freshSub": "NFC Tools → Write → URL → paste → hold the tag to the phone → lock the tag.",
+    "factory.inventory": "Inventory",
+    "factory.unclaimed": "Unclaimed",
+    "set.rename": "Rename",
   },
 
   ro: {
@@ -431,6 +441,16 @@ const dict = {
     "cp.attached": "Gata — acest tag este acum „{name}” la {clinic}. Angajații îl pot scana imediat.",
     "setup.tagReady": "Tag-ul tău este deja scris și legat de această clinică — nu ai nimic de scris. Printează acest QR ca afiș de rezervă dacă vrei.",
     "days.device": "telefon",
+    "factory.title": "Fabrica TapTime",
+    "factory.heading": "Linia de producție",
+    "factory.sub": "Generează câte un TapTime pentru fiecare unitate fizică, scrie linkul pe tag, pune-l în cutie. Rândurile devin verzi când o clinică le revendică.",
+    "factory.key": "Cheia fabricii",
+    "factory.mint": "Generează TapTime",
+    "factory.freshTitle": "Proaspăt generate — scrie-le pe tag-uri",
+    "factory.freshSub": "NFC Tools → Write → URL → lipește → ține tag-ul la telefon → blochează tag-ul.",
+    "factory.inventory": "Inventar",
+    "factory.unclaimed": "Nerevendicat",
+    "set.rename": "Redenumește",
   },
 };
 

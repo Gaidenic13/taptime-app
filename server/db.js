@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS attendance (
   risk_level TEXT NOT NULL DEFAULT 'low',
   risk_signals TEXT DEFAULT '[]',
   device_id INTEGER,                 -- which phone/browser made the check-in
+  checkpoint_id INTEGER,             -- which entrance/tag was scanned
   created_at TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT ''
 );
