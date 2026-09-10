@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, setToken, getGeo, fmtTime, fmtMin } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
 
-// Scanning a factory-written, unclaimed tag shows this instead of the PIN pad:
-// setup code from the box + clinic details → org created, tag bound, straight
-// into the onboarding wizard (with the write-the-tag step already done).
+// The scan page — the only thing employees ever touch.
+//  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
+//  · First scan on a phone  → enter your activation code once; the phone is
+//    linked to you from then on
+//  · Every later scan       → automatic: the server records check-in or
+//    check-out (hour, date, device) with no typing at all
 function ClaimForm({ code }) {
   const { t } = useI18n();
   const { adoptSession } = useAuth();
@@ -23,7 +26,7 @@ function ClaimForm({ code }) {
       const d = await api("/orgs/claim", { method: "POST", body: { ...form, tag_code: code } });
       setToken(d.token);
       adoptSession(d.user);
-      navigate("/setup?tag=ready");
+      navigate("/setup");
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -61,28 +64,22 @@ function ClaimForm({ code }) {
   );
 }
 
-// Landing page for a QR poster / NFC tag. The URL only identifies the
-// checkpoint; a short-lived server challenge plus a light identity step are
-// what actually clock someone in.
-//
-// Friendliest path: enter your 4-digit PIN and the server decides in vs out.
-// Employees already signed into the app on this phone skip even that — they
-// get a one-tap button. Email sign-in stays available as a fallback.
 export default function Checkpoint() {
   const { code } = useParams();
-  const { user, login } = useAuth();
+  const { user } = useAuth();
   const { t } = useI18n();
   const [challenge, setChallenge] = useState(null);
   const [checkpoint, setCheckpoint] = useState(null);
   const [today, setToday] = useState(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState(null); // { name, did, time, worked }
+  const [result, setResult] = useState(null); // { name, did, time, worked, review, activated }
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState("pin"); // pin | email
   const [pin, setPin] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [unclaimed, setUnclaimed] = useState(false);
+  const autoFired = useRef(false);
+
+  const isEmployee = user && user.role === "employee";
+  const isStaffAdmin = user && user.role !== "employee";
 
   const fetchChallenge = () => {
     setError("");
@@ -96,10 +93,41 @@ export default function Checkpoint() {
 
   useEffect(() => { fetchChallenge(); }, [code]);
   useEffect(() => {
-    if (user) api("/me").then((d) => setToday(d.today)).catch(() => {});
-  }, [user]);
+    if (isStaffAdmin) api("/me").then((d) => setToday(d.today)).catch(() => {});
+  }, [isStaffAdmin]);
 
-  // --- PIN flow (no session) ---
+  const showResult = (d, extra = {}) => {
+    const att = d.today.attendance;
+    setResult({
+      name: d.user?.first_name || user?.first_name,
+      did: d.did,
+      time: d.did === "out" ? fmtTime(att?.clock_out) : fmtTime(att?.clock_in),
+      worked: d.today.worked_min,
+      review: d.today.status === "requires_review",
+      ...extra,
+    });
+  };
+
+  // Activated phone (employee session): the scan itself does everything.
+  useEffect(() => {
+    if (!isEmployee || !challenge || autoFired.current) return;
+    autoFired.current = true;
+    (async () => {
+      setBusy(true);
+      try {
+        const geo = await getGeo();
+        const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
+        showResult(d);
+      } catch (e) {
+        setError(e.message);
+        if (e.status === 410) fetchChallenge();
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [isEmployee, challenge]);
+
+  // First scan on this phone: activation code → persistent member session.
   const submitPin = async (fullPin) => {
     setBusy(true); setError("");
     try {
@@ -108,14 +136,8 @@ export default function Checkpoint() {
         method: "POST",
         body: { challenge, pin: fullPin, geo },
       });
-      const att = d.today.attendance;
-      setResult({
-        name: d.user.first_name,
-        did: d.did,
-        time: d.did === "out" ? fmtTime(att?.clock_out) : fmtTime(att?.clock_in),
-        worked: d.today.worked_min,
-        review: d.today.status === "requires_review",
-      });
+      if (d.token) setToken(d.token); // link this phone
+      showResult(d, { activated: true });
     } catch (e) {
       setError(e.message);
       if (e.status === 410) fetchChallenge();
@@ -132,45 +154,25 @@ export default function Checkpoint() {
     if (next.length === 4) submitPin(next);
   };
 
-  const resetForNext = () => {
-    setResult(null);
-    fetchChallenge(); // the previous challenge was consumed
-  };
-
-  // --- email/session flow ---
-  const doLogin = async (e) => {
-    e.preventDefault();
-    setError("");
-    try {
-      await login(email, password);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
+  // Admin/manager scanning: explicit buttons (they may just be testing).
   const actSession = async (action) => {
     setBusy(true); setError("");
     try {
       const geo = await getGeo();
-      const d = await api("/checkpoint/consume", {
-        method: "POST",
-        body: { challenge, action, geo },
-      });
+      const d = await api("/checkpoint/consume", { method: "POST", body: { challenge, action, geo } });
       setToday(d.today);
-      const att = d.today.attendance;
-      setResult({
-        name: user.first_name,
-        did: action === "clock-out" ? "out" : "in",
-        time: action === "clock-out" ? fmtTime(att?.clock_out) : fmtTime(att?.clock_in),
-        worked: d.today.worked_min,
-        review: d.today.status === "requires_review",
-      });
+      showResult({ user: { first_name: user.first_name }, did: action === "clock-out" ? "out" : "in", today: d.today });
     } catch (e) {
       setError(e.message);
       if (e.status === 410) fetchChallenge();
     } finally {
       setBusy(false);
     }
+  };
+
+  const notMe = () => {
+    setToken(null);
+    window.location.reload();
   };
 
   const s = today?.status;
@@ -192,7 +194,7 @@ export default function Checkpoint() {
         )}
         {!unclaimed && error && <div className="error-box">{error}</div>}
 
-        {/* -------- result of a tap (any flow) -------- */}
+        {/* -------- scan result -------- */}
         {result && (
           <>
             <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: result.name })}</h2>
@@ -204,36 +206,36 @@ export default function Checkpoint() {
               </div>
             )}
             {result.did === "in_recent" && <div className="ok-box">{t("cp.justIn", { time: result.time })}</div>}
-            {result.did === "done" && <p className="muted">{t("term.recorded")}</p>}
+            {result.activated && <p className="small muted">{t("cp.activated")}</p>}
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
-            <button className="btn ghost" style={{ marginTop: 10 }} onClick={resetForNext}>{t("common.done")}</button>
           </>
         )}
 
-        {/* -------- signed-in session: one-tap button -------- */}
-        {!result && user && today && (
+        {/* -------- activated employee phone: busy indicator only -------- */}
+        {!result && isEmployee && checkpoint && (
+          <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
+        )}
+
+        {/* -------- admin/manager session: explicit buttons -------- */}
+        {!result && isStaffAdmin && today && checkpoint && (
           <>
             <span className={`pill ${s}`}>{t(`status.${s}`)}</span>
             <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
-              {(s === "upcoming" || s === "late" || s === "no_shift" || s === "complete") && (
-                <button className="btn big" disabled={busy} onClick={() => actSession("clock-in")}>
-                  {busy ? t("cp.recording") : t("cp.clockIn", { name: user.first_name })}
-                </button>
-              )}
-              {(s === "working" || s === "break") && (
+              {(s === "working" || s === "break") ? (
                 <button className="btn big" disabled={busy} onClick={() => actSession("clock-out")}>
                   {busy ? t("cp.recording") : t("dash.clockOut")}
                 </button>
-              )}
-              {s === "requires_review" && (
-                <p className="muted">{t("cp.already")}</p>
+              ) : (
+                <button className="btn big" disabled={busy} onClick={() => actSession("clock-in")}>
+                  {busy ? t("cp.recording") : t("cp.clockIn", { name: user.first_name })}
+                </button>
               )}
             </div>
           </>
         )}
 
-        {/* -------- no session: PIN pad (default) or email fallback -------- */}
-        {!result && !user && checkpoint && mode === "pin" && (
+        {/* -------- no session yet: one-time activation -------- */}
+        {!result && !user && checkpoint && (
           <>
             <p className="muted" style={{ marginBottom: 2 }}>{t("cp.enterPin")}</p>
             <p className="small muted">{t("cp.pinSub")}</p>
@@ -248,31 +250,21 @@ export default function Checkpoint() {
               <button disabled={busy} onClick={() => press("0")}>0</button>
               <button disabled={busy} onClick={() => setPin(pin.slice(0, -1))}>⌫</button>
             </div>
-            <p className="small muted" style={{ marginTop: 14 }}>
-              <a href="#email" onClick={(e) => { e.preventDefault(); setMode("email"); }}>{t("cp.useEmail")}</a>
-            </p>
           </>
         )}
 
-        {!result && !user && checkpoint && mode === "email" && (
-          <form onSubmit={doLogin} style={{ textAlign: "left", marginTop: 10 }}>
-            <p className="muted small" style={{ textAlign: "center" }}>{t("cp.signin")}</p>
-            <label className="field"><span>{t("common.email")}</span>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-            </label>
-            <label className="field"><span>{t("common.password")}</span>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </label>
-            <button className="btn big">{t("login.signin")}</button>
-            <p className="small muted" style={{ marginTop: 12, textAlign: "center" }}>
-              <a href="#pin" onClick={(e) => { e.preventDefault(); setMode("pin"); }}>{t("cp.usePin")}</a>
-            </p>
-          </form>
+        {user && (
+          <p className="small muted" style={{ marginTop: 16 }}>
+            <a href="#notme" onClick={(e) => { e.preventDefault(); notMe(); }}>
+              {t("cp.notYou", { name: user.first_name })}
+            </a>
+          </p>
         )}
-
-        <p className="small muted" style={{ marginTop: 16 }}>
-          <Link to="/">{t("cp.openApp")}</Link>
-        </p>
+        {isStaffAdmin && (
+          <p className="small muted" style={{ marginTop: 4 }}>
+            <Link to="/">{t("cp.openApp")}</Link>
+          </p>
+        )}
       </div>
     </div>
   );

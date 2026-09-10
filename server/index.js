@@ -167,7 +167,23 @@ app.post("/api/checkpoint/pin", handle(async (req) => {
   const result = await tapToggle(user, {
     method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
   });
-  return { user: { first_name: user.first_name }, ...result };
+  // Activation: the code is entered once — the phone gets a persistent member
+  // session, so every later scan records in/out with no typing at all.
+  const token = await createSession(user.id);
+  return { user: { first_name: user.first_name }, token, ...result };
+}));
+
+// Auto-scan for activated phones: an employee session + a fresh challenge is
+// all it takes — the server decides in vs out and records the device.
+app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
+  const { challenge, geo } = req.body || {};
+  const cp = await consumeChallenge(challenge, req.user);
+  if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
+  const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
+  const result = await tapToggle(req.user, {
+    method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
+  });
+  return { user: { first_name: req.user.first_name }, ...result };
 }));
 
 // ---------------------------------------------------------------- kiosk (restricted session)

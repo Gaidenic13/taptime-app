@@ -1,30 +1,20 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import QRCode from "qrcode";
+import { useNavigate } from "react-router-dom";
 import { api, fmtTime } from "../api.js";
 import { useI18n } from "../i18n.jsx";
 
-// Out-of-the-box onboarding wizard: the clinic manager unboxes the product,
-// walks these three steps once, and from then on the everyday surface for
-// workers is just the scan page. Finishing marks the org as onboarded.
-function QrImg({ url }) {
-  const [src, setSrc] = useState("");
-  useEffect(() => { QRCode.toDataURL(url, { width: 480, margin: 1 }).then(setSrc); }, [url]);
-  return src ? <img className="qr-box" src={src} alt={`QR ${url}`} width={150} height={150} /> : null;
-}
-
+// Out-of-the-box onboarding: the tag arrives already written and linked, so
+// the manager only (1) adds the team and (2) watches the test scan land.
+// Finishing marks the org as onboarded; workers only ever see the scan page.
 export default function Setup() {
   const { t } = useI18n();
   const navigate = useNavigate();
-  // Arrived via a pre-written tag claim: the write-the-tag step is already done.
-  const tagReady = new URLSearchParams(useLocation().search).get("tag") === "ready";
   const [step, setStep] = useState(0);
   const [members, setMembers] = useState([]);
   const [checkpoint, setCheckpoint] = useState(null);
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [justAdded, setJustAdded] = useState(null);
   const [scans, setScans] = useState([]);
   const pollRef = useRef(null);
@@ -38,14 +28,12 @@ export default function Setup() {
   // Live scan feed on the test step — the "it works!" unboxing moment.
   useEffect(() => {
     clearInterval(pollRef.current);
-    if (step === 2) {
+    if (step === 1) {
       const poll = () =>
         api("/team/today").then((d) => {
           const rows = [];
           for (const r of d.roster) {
-            for (const s of r.sessions) {
-              rows.push({ name: r.name, in: s.in, out: s.out });
-            }
+            for (const s of r.sessions) rows.push({ name: r.name, in: s.in, out: s.out });
           }
           rows.sort((a, b) => (a.in < b.in ? 1 : -1));
           setScans(rows.slice(0, 6));
@@ -69,12 +57,6 @@ export default function Setup() {
     }
   };
 
-  const url = checkpoint ? `${window.location.origin}/checkpoint/${checkpoint.code}` : "";
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-    catch { /* clipboard unavailable */ }
-  };
-
   const finish = async () => {
     try {
       await api("/admin/settings", { method: "PUT", body: { onboarded: true } });
@@ -84,7 +66,7 @@ export default function Setup() {
     }
   };
 
-  const STEPS = ["setup.s1", "setup.s2", "setup.s3"];
+  const STEPS = ["setup.s1", "setup.s3"];
 
   return (
     <>
@@ -110,7 +92,7 @@ export default function Setup() {
           </form>
           {error && <div className="error-box">{error}</div>}
           {justAdded && (
-            <div className="ok-box">{justAdded.name} — PIN <strong>{justAdded.pin}</strong></div>
+            <div className="ok-box">{justAdded.name} — {t("emp.pin").split("(")[0].trim()} <strong>{justAdded.pin}</strong></div>
           )}
           {members.length > 0 && (
             <>
@@ -118,7 +100,7 @@ export default function Setup() {
               {members.map((m) => (
                 <div className="list-item spread" key={m.id}>
                   <strong>{m.first_name} {m.last_name}</strong>
-                  <span className="pill no_shift">PIN {m.pin || "—"}</span>
+                  <span className="pill no_shift">{m.pin || "—"}</span>
                 </div>
               ))}
             </>
@@ -126,42 +108,11 @@ export default function Setup() {
         </div>
       )}
 
-      {step === 1 && checkpoint && (
-        <div className="card">
-          <h2>{t("setup.s2")}</h2>
-          <p className="small muted">{tagReady ? t("setup.tagReady") : t("setup.s2Sub")}</p>
-          {tagReady && <div className="ok-box">{t("setup.tagReady").split("—")[0].trim()} ✓</div>}
-          <div className="row" style={{ marginTop: 12, alignItems: "flex-start" }}>
-            <QrImg url={url} />
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div className="card tinted" style={{ padding: 12, wordBreak: "break-all", fontSize: 13, fontWeight: 600 }}>
-                {url}
-              </div>
-              <button className="btn small" onClick={copy}>{copied ? t("setup.copied") : t("setup.copy")}</button>
-              {!tagReady && (
-                <ol className="small muted" style={{ paddingLeft: 18, marginTop: 12, lineHeight: 1.7 }}>
-                  <li>{t("setup.nfc1")}</li>
-                  <li>{t("setup.nfc2")}</li>
-                  <li>{t("setup.nfc3")}</li>
-                  <li>{t("setup.nfc4")}</li>
-                </ol>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {step === 2 && (
+      {step === 1 && (
         <div className="card">
           <h2>{t("setup.s3")}</h2>
           <p className="small muted">{t("setup.s3Sub")}</p>
-          {checkpoint && (
-            <a className="btn subtle" style={{ display: "inline-block", margin: "8px 0 14px" }}
-              href={`/checkpoint/${checkpoint.code}`} target="_blank" rel="noreferrer">
-              {t("setup.open")}
-            </a>
-          )}
-          <h3>{t("setup.live")}</h3>
+          <h3 style={{ marginTop: 14 }}>{t("setup.live")}</h3>
           {scans.length === 0 && <div className="empty">{t("setup.waiting")}</div>}
           {scans.map((s, i) => (
             <div className="list-item spread" key={i}>
@@ -179,10 +130,10 @@ export default function Setup() {
         {step > 0 && (
           <button className="btn subtle" onClick={() => setStep(step - 1)}>{t("common.back")}</button>
         )}
-        {step < 2 && (
-          <button className="btn" onClick={() => setStep(step + 1)}>{t("setup.next")}</button>
+        {step === 0 && (
+          <button className="btn" onClick={() => setStep(1)}>{t("setup.next")}</button>
         )}
-        {step === 2 && (
+        {step === 1 && (
           <button className="btn" onClick={finish}>{t("setup.finish")}</button>
         )}
       </div>
