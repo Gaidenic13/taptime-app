@@ -66,16 +66,7 @@ export async function createOrganization(
 // the clinic, and binds the tag's code as its checkpoint. The physical tag
 // never needs rewriting.
 export async function claimTag({ tag_code, claim_code, ...signup }) {
-  const clean = String(claim_code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const tag = await db.get(
-    "SELECT * FROM provisioned_tags WHERE code = ?", String(tag_code || "").trim()
-  );
-  if (!tag) throw new Error("This tag is not recognized");
-  if (tag.organization_id) throw new Error("This tag is already linked to a clinic");
-  if (clean !== tag.claim_code.replace(/[^A-Z0-9]/g, "")) {
-    throw new Error("Setup code doesn't match this tag — check the card in your box");
-  }
-
+  const tag = await verifyUnclaimedTag(tag_code, claim_code);
   const result = await createOrganization(signup, { checkpointCode: tag.code });
   await db.run(
     "UPDATE provisioned_tags SET organization_id = ?, claimed_at = ? WHERE id = ?",
@@ -86,6 +77,66 @@ export async function claimTag({ tag_code, claim_code, ...signup }) {
     entityType: "provisioned_tag", entityId: tag.id, next: { code: tag.code },
   });
   return result;
+}
+
+// Shared: verify the box's setup code matches an unclaimed tag.
+async function verifyUnclaimedTag(tag_code, claim_code) {
+  const clean = String(claim_code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const tag = await db.get(
+    "SELECT * FROM provisioned_tags WHERE code = ?", String(tag_code || "").trim()
+  );
+  if (!tag) throw new Error("This tag is not recognized");
+  if (tag.organization_id) throw new Error("This tag is already linked to a clinic");
+  if (clean !== tag.claim_code.replace(/[^A-Z0-9]/g, "")) {
+    throw new Error("Setup code doesn't match this tag — check the card in your box");
+  }
+  return tag;
+}
+
+// Bind a verified tag to an admin's existing clinic as one more checkpoint —
+// same team, same Days register, one more door.
+async function bindTagToOrg(admin, tag) {
+  if (admin.role !== "admin" && admin.role !== "owner") {
+    throw new Error("Only a clinic administrator can add tags");
+  }
+  const count = (await db.get(
+    "SELECT COUNT(*) AS n FROM attendance_checkpoints WHERE organization_id = ?", admin.organization_id
+  )).n;
+  const cp = await db.get(`
+    INSERT INTO attendance_checkpoints (organization_id, location_id, name, type, code)
+    VALUES (?, ?, ?, 'NFC', ?) RETURNING *
+  `, admin.organization_id, admin.location_id, `Entrance ${count + 1}`, tag.code);
+  await db.run(
+    "UPDATE provisioned_tags SET organization_id = ?, claimed_at = ? WHERE id = ?",
+    admin.organization_id, new Date().toISOString(), tag.id
+  );
+  await audit({
+    orgId: admin.organization_id, actorId: admin.id, action: "tag_attached",
+    entityType: "attendance_checkpoint", entityId: cp.id, next: { code: tag.code, name: cp.name },
+  });
+  const org = await db.get("SELECT name FROM organizations WHERE id = ?", admin.organization_id);
+  return { checkpoint: { name: cp.name }, clinic: org.name };
+}
+
+// A clinic buying ANOTHER TapTime attaches it to the clinic it already has:
+// the setup code proves possession of the box, admin credentials (or an
+// existing admin session, see the route) prove ownership of the clinic.
+export async function attachTag({ tag_code, claim_code, email, password }) {
+  const tag = await verifyUnclaimedTag(tag_code, claim_code);
+  const { verifyPassword } = await import("../auth.js");
+  const admin = await db.get(
+    "SELECT * FROM users WHERE email = ? AND active = 1", String(email || "").trim().toLowerCase()
+  );
+  if (!admin || !admin.password_hash || !verifyPassword(password || "", admin.password_hash)) {
+    throw new Error("Invalid email or password");
+  }
+  return bindTagToOrg(admin, tag);
+}
+
+// Admin already signed in on the scanning phone: setup code alone suffices.
+export async function attachTagAsAdmin(admin, { tag_code, claim_code }) {
+  const tag = await verifyUnclaimedTag(tag_code, claim_code);
+  return bindTagToOrg(admin, tag);
 }
 
 // Unambiguous, human-friendly claim codes (no 0/O/1/I), shown as XXXX-XXXX.

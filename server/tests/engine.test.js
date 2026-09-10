@@ -280,6 +280,39 @@ test("pre-written tag: claim binds org, wrong/duplicate claims rejected, scans r
   assert.equal(r.today.attendance.device_id, deviceId);
 });
 
+test("second tag attaches to the SAME clinic as another entrance", async () => {
+  const { attachTag, attachTagAsAdmin, makeClaimCode } = await import("../domains/org.js");
+  const claim2 = makeClaimCode();
+  await db.run(
+    "INSERT INTO provisioned_tags (claim_code, code, created_at) VALUES (?, 'tag-second-door', ?)",
+    claim2, new Date().toISOString()
+  );
+  const admin = await db.get("SELECT * FROM users WHERE email = 'box@t.test'");
+
+  // Wrong password rejected; non-admin rejected.
+  await assert.rejects(attachTag({
+    tag_code: "tag-second-door", claim_code: claim2, email: "box@t.test", password: "wrong",
+  }), /Invalid email or password/);
+
+  // Session-based attach: setup code alone.
+  const res = await attachTagAsAdmin(admin, { tag_code: "tag-second-door", claim_code: claim2 });
+  assert.equal(res.clinic, "Boxed Clinic");
+  assert.match(res.checkpoint.name, /Entrance 2/);
+
+  // Both tags now belong to ONE org — scans through either feed the same records.
+  const cps = await db.all(
+    "SELECT code FROM attendance_checkpoints WHERE organization_id = ? ORDER BY id", admin.organization_id
+  );
+  assert.deepEqual(cps.map((c) => c.code), ["tag-abc-123", "tag-second-door"]);
+
+  // And the second tag cannot be claimed as a new clinic anymore.
+  const { claimTag } = await import("../domains/org.js");
+  await assert.rejects(claimTag({
+    tag_code: "tag-second-door", claim_code: claim2,
+    clinic_name: "X", first_name: "A", last_name: "B", email: "x9@t.test", password: "secret1",
+  }), /already linked/);
+});
+
 // ---------------------------------------------------------------- corrections audit
 test("approved corrections update attendance and leave an audit trail", async () => {
   const corrId = await requestCorrection(await user(empA), {

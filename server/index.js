@@ -19,7 +19,7 @@ import {
   checkpointByCode, createChallenge, consumeChallenge, createCheckpoint, createKiosk, resetKiosk,
 } from "./domains/checkpoints.js";
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
-import { createOrganization, claimTag, quickAddMember } from "./domains/org.js";
+import { createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember } from "./domains/org.js";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
 
@@ -51,6 +51,14 @@ app.post("/api/orgs/signup", handle(async (req) => createOrganization(req.body |
 // Pre-written tag claim: the scan page posts the tag's code + the setup code
 // from the box, plus the clinic/admin details. Binds the tag to the new org.
 app.post("/api/orgs/claim", handle(async (req) => claimTag(req.body || {})));
+
+// Additional tag for an EXISTING clinic (a second/third TapTime for more
+// doors): setup code + admin sign-in, or just the setup code when the
+// scanning phone already holds an admin session.
+app.post("/api/orgs/attach", handle(async (req) => attachTag(req.body || {})));
+app.post("/api/orgs/attach-session", requireAuth, handle(async (req) =>
+  attachTagAsAdmin(req.user, req.body || {})
+));
 
 // ---------------------------------------------------------------- auth
 app.post("/api/auth/login", handle(async (req) => {

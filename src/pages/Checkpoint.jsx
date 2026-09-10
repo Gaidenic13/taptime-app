@@ -12,14 +12,17 @@ import { useI18n, LangSwitch } from "../i18n.jsx";
 //    check-out (hour, date, device) with no typing at all
 function ClaimForm({ code }) {
   const { t } = useI18n();
-  const { adoptSession } = useAuth();
+  const { user, adoptSession } = useAuth();
   const navigate = useNavigate();
+  const adminSession = user && (user.role === "admin" || user.role === "owner");
+  const [mode, setMode] = useState("new"); // new | existing
   const [form, setForm] = useState({ claim_code: "", clinic_name: "", first_name: "", last_name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attached, setAttached] = useState(null); // { name, clinic }
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
-  const submit = async (e) => {
+  const submitNew = async (e) => {
     e.preventDefault();
     setError(""); setBusy(true);
     try {
@@ -33,25 +36,76 @@ function ClaimForm({ code }) {
     }
   };
 
+  const submitAttach = async (e) => {
+    e.preventDefault();
+    setError(""); setBusy(true);
+    try {
+      const d = adminSession
+        ? await api("/orgs/attach-session", { method: "POST", body: { tag_code: code, claim_code: form.claim_code } })
+        : await api("/orgs/attach", {
+            method: "POST",
+            body: { tag_code: code, claim_code: form.claim_code, email: form.email, password: form.password },
+          });
+      setAttached({ name: d.checkpoint.name, clinic: d.clinic });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (attached) {
+    return (
+      <div style={{ marginTop: 10 }}>
+        <div className="ok-box">{t("cp.attached", { name: attached.name, clinic: attached.clinic })}</div>
+      </div>
+    );
+  }
+
+  // Admin already signed in on this phone: one field, one button.
+  if (adminSession) {
+    return (
+      <form onSubmit={submitAttach} style={{ textAlign: "left", marginTop: 8 }}>
+        <h2 style={{ textAlign: "center" }}>{t("cp.claimExisting")}</h2>
+        <label className="field"><span>{t("cp.claimCode")}</span>
+          <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required autoFocus
+            style={{ textAlign: "center", letterSpacing: "0.15em", fontWeight: 600, textTransform: "uppercase" }} />
+        </label>
+        {error && <div className="error-box">{error}</div>}
+        <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.attachBtn")}</button>
+      </form>
+    );
+  }
+
   return (
-    <form onSubmit={submit} style={{ textAlign: "left", marginTop: 8 }}>
+    <form onSubmit={mode === "new" ? submitNew : submitAttach} style={{ textAlign: "left", marginTop: 8 }}>
       <h2 style={{ textAlign: "center" }}>{t("cp.claimTitle")}</h2>
       <p className="muted small" style={{ textAlign: "center" }}>{t("cp.claimSub")}</p>
+      <div className="seg" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+        <button type="button" className={mode === "new" ? "active" : ""} style={{ flex: 1 }}
+          onClick={() => setMode("new")}>{t("cp.claimNew")}</button>
+        <button type="button" className={mode === "existing" ? "active" : ""} style={{ flex: 1 }}
+          onClick={() => setMode("existing")}>{t("cp.claimExisting")}</button>
+      </div>
       <label className="field"><span>{t("cp.claimCode")}</span>
-        <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required autoFocus
+        <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required
           style={{ textAlign: "center", letterSpacing: "0.15em", fontWeight: 600, textTransform: "uppercase" }} />
       </label>
-      <label className="field"><span>{t("signup.clinic")}</span>
-        <input value={form.clinic_name} onChange={set("clinic_name")} required />
-      </label>
-      <div className="grid2">
-        <label className="field"><span>{t("signup.first")}</span>
-          <input value={form.first_name} onChange={set("first_name")} required />
-        </label>
-        <label className="field"><span>{t("signup.last")}</span>
-          <input value={form.last_name} onChange={set("last_name")} required />
-        </label>
-      </div>
+      {mode === "new" && (
+        <>
+          <label className="field"><span>{t("signup.clinic")}</span>
+            <input value={form.clinic_name} onChange={set("clinic_name")} required />
+          </label>
+          <div className="grid2">
+            <label className="field"><span>{t("signup.first")}</span>
+              <input value={form.first_name} onChange={set("first_name")} required />
+            </label>
+            <label className="field"><span>{t("signup.last")}</span>
+              <input value={form.last_name} onChange={set("last_name")} required />
+            </label>
+          </div>
+        </>
+      )}
       <label className="field"><span>{t("common.email")}</span>
         <input type="email" value={form.email} onChange={set("email")} required />
       </label>
@@ -59,7 +113,9 @@ function ClaimForm({ code }) {
         <input type="password" value={form.password} onChange={set("password")} minLength={6} required />
       </label>
       {error && <div className="error-box">{error}</div>}
-      <button className="btn big" disabled={busy}>{busy ? t("signup.creating") : t("cp.claimBtn")}</button>
+      <button className="btn big" disabled={busy}>
+        {busy ? t("signup.creating") : mode === "new" ? t("cp.claimBtn") : t("cp.attachBtn")}
+      </button>
     </form>
   );
 }
