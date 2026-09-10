@@ -144,6 +144,7 @@ app.get("/api/me", requireAuth, handle(async (req) => {
   const user = await publicUser(req.user);
   // Members see their own personal code — it's their key on any phone.
   if (req.user.role === "employee") user.code = req.user.pin || null;
+  user.clinic = (await db.get("SELECT name FROM organizations WHERE id = ?", req.orgId))?.name || "";
   return {
     user,
     token: req.token, // lets a cookie-recognized phone restore its storage token
@@ -184,9 +185,13 @@ app.get("/api/checkpoint/:code", handle(async (req) => {
     const e = new Error("Checkpoint not found"); e.status = 404; throw e;
   }
   const ch = await createChallenge(cp);
+  const org = await db.get("SELECT name FROM organizations WHERE id = ?", cp.organization_id);
   return {
     challenge: ch.token, expires_in: ch.expires_in,
-    checkpoint: { name: cp.name, type: cp.type, location: cp.location_name },
+    checkpoint: {
+      name: cp.name, type: cp.type, location: cp.location_name,
+      organization_id: cp.organization_id, clinic: org?.name || "",
+    },
   };
 }));
 
@@ -255,8 +260,14 @@ app.post("/api/checkpoint/pin", handle(async (req, res) => {
 // all it takes — the server decides in vs out and records the device.
 app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
   const { challenge, geo } = req.body || {};
+  // A phone linked to a member of another clinic must get a clear answer,
+  // not a generic "expired" — the challenge is org-scoped by design.
+  const chRow = await db.get("SELECT organization_id FROM attendance_challenges WHERE token = ?", String(challenge || ""));
+  if (chRow && chRow.organization_id !== req.user.organization_id) {
+    const e = new Error("This tag belongs to another clinic"); e.status = 409; throw e;
+  }
   const cp = await consumeChallenge(challenge, req.user);
-  if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
+  if (!cp) { const e = new Error("This scan has expired — tap the tag again"); e.status = 410; throw e; }
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   const result = await tapToggle(req.user, {
     method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,

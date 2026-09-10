@@ -165,6 +165,10 @@ export default function Checkpoint() {
 
   const isEmployee = user && user.role === "employee";
   const isStaffAdmin = user && user.role !== "employee";
+  const issuedAt = useRef(0);
+  // A phone linked to someone at a different clinic than this tag's.
+  const wrongClinic = !!(user && checkpoint && checkpoint.organization_id &&
+    checkpoint.organization_id !== user.organization_id);
 
   const fetchChallenge = async () => {
     setError("");
@@ -172,6 +176,7 @@ export default function Checkpoint() {
       const d = await api(`/checkpoint/${code}`);
       if (d.unclaimed) { setUnclaimed(true); return null; }
       setChallenge(d.challenge); setCheckpoint(d.checkpoint);
+      issuedAt.current = Date.now();
       return d.challenge;
     } catch (e) {
       setError(e.message);
@@ -198,21 +203,30 @@ export default function Checkpoint() {
     });
   };
 
-  // Toggle for activated phones, with one silent retry on an expired challenge.
-  const doTap = async () => {
+  // Clock-out must come from a FRESH physical scan: the button only works with
+  // the challenge this page load received, within its 2-minute life. No silent
+  // re-issue — an old tab or bookmark can't clock anyone out.
+  const clockOut = async () => {
+    if (Date.now() - issuedAt.current > 110 * 1000) { setError(t("cp.rescanOut")); return; }
     setBusy(true); setError("");
     try {
       const geo = await getGeo();
-      try {
-        const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
-        showResult(d);
-      } catch (e) {
-        if (e.status !== 410) throw e;
-        const ch = await fetchChallenge();
-        if (!ch) throw e;
-        const d = await api("/checkpoint/tap", { method: "POST", body: { challenge: ch, geo } });
-        showResult(d);
-      }
+      const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
+      showResult(d);
+    } catch (e) {
+      setError(e.status === 410 ? t("cp.rescanOut") : e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Check-in for activated phones: automatic on the scan itself.
+  const checkIn = async () => {
+    setBusy(true); setError("");
+    try {
+      const geo = await getGeo();
+      const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
+      showResult(d);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -220,15 +234,15 @@ export default function Checkpoint() {
     }
   };
 
-  // Activated phone: checking IN is automatic — but once checked in, clocking
-  // OUT takes a deliberate tap on the button (no accidental checkouts).
+  // Activated phone at ITS OWN clinic: checking IN is automatic; once checked
+  // in, the page shows history and waits for the explicit Clock out tap.
   useEffect(() => {
-    if (!isEmployee || !challenge || !today || autoFired.current || result) return;
+    if (!isEmployee || !challenge || !today || autoFired.current || result || wrongClinic) return;
     const open = today.status === "working" || today.status === "break";
-    if (open) return; // show history + explicit Clock out button instead
+    if (open) return;
     autoFired.current = true;
-    doTap();
-  }, [isEmployee, challenge, today]);
+    checkIn();
+  }, [isEmployee, challenge, today, wrongClinic]);
 
   // First scan on this phone: activation code → persistent member session.
   const submitPin = async (fullPin) => {
@@ -312,22 +326,31 @@ export default function Checkpoint() {
             <DayHistory sessions={result.sessions} worked={result.worked} />
             {result.activated && <p className="small muted">{t("cp.activated")}</p>}
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
-            {result.did !== "out" && (isEmployee || result.activated) && (
-              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={doTap}>
-                {busy ? t("cp.recording") : t("dash.clockOut")}
-              </button>
-            )}
+            {/* Never a Clock out button here: this page's scan was just used. */}
+            {result.did !== "out" && <p className="small muted">{t("cp.scanToOut")}</p>}
           </>
         )}
 
-        {/* -------- activated employee phone -------- */}
-        {!result && isEmployee && checkpoint && today && (
+        {/* -------- linked phone, but this tag is another clinic's -------- */}
+        {!result && user && checkpoint && wrongClinic && (
+          <>
+            <div className="error-box" style={{ textAlign: "left" }}>
+              {t("cp.wrongClinic", { name: user.first_name, mine: user.clinic || "?", clinic: checkpoint.clinic })}
+            </div>
+            <button className="btn big" onClick={notMe}>
+              {t("cp.wrongClinicAction", { clinic: checkpoint.clinic })}
+            </button>
+          </>
+        )}
+
+        {/* -------- activated employee phone at its own clinic -------- */}
+        {!result && isEmployee && checkpoint && today && !wrongClinic && (
           (today.status === "working" || today.status === "break") ? (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
               <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>
               <DayHistory sessions={today.sessions} worked={today.worked_min} />
-              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={doTap}>
+              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={clockOut}>
                 {busy ? t("cp.recording") : t("dash.clockOut")}
               </button>
             </>
@@ -337,7 +360,7 @@ export default function Checkpoint() {
         )}
 
         {/* -------- admin/manager session: explicit buttons -------- */}
-        {!result && isStaffAdmin && today && checkpoint && (
+        {!result && isStaffAdmin && today && checkpoint && !wrongClinic && (
           <>
             <span className={`pill ${s}`}>{t(`status.${s}`)}</span>
             <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
