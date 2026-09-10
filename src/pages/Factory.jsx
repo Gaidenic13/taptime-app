@@ -33,6 +33,28 @@ function QrImg({ url }) {
   return src ? <img className="qr-box" src={src} alt={`QR ${url}`} width={92} height={92} /> : null;
 }
 
+// Two-step delete: first click asks, second click acts — no misclick risk.
+function RemoveBtn({ onConfirm }) {
+  const { t } = useI18n();
+  const [arming, setArming] = useState(false);
+  useEffect(() => {
+    if (!arming) return;
+    const timer = setTimeout(() => setArming(false), 5000); // disarm if ignored
+    return () => clearTimeout(timer);
+  }, [arming]);
+
+  if (!arming) {
+    return <button className="btn ghost small" onClick={() => setArming(true)}>{t("common.remove")}</button>;
+  }
+  return (
+    <span className="row" style={{ gap: 6 }}>
+      <span className="small" style={{ fontWeight: 600 }}>{t("factory.sure")}</span>
+      <button className="btn danger small" onClick={onConfirm}>{t("factory.confirm")}</button>
+      <button className="btn subtle small" onClick={() => setArming(false)}>{t("common.cancel")}</button>
+    </span>
+  );
+}
+
 function CopyBtn({ text }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -156,13 +178,12 @@ function FactoryInner() {
                 : <span className="pill pending">{t("factory.unclaimed")}</span>}
               <CopyBtn text={urlFor(tg.code)} />
               {!tg.clinic && (
-                <button className="btn ghost small"
-                  onClick={async () => {
+                <RemoveBtn
+                  onConfirm={async () => {
                     try { await factoryApi(`/tags/${tg.id}`, { method: "DELETE" }); load(); }
                     catch (e) { setError(e.message); }
-                  }}>
-                  {t("common.remove")}
-                </button>
+                  }}
+                />
               )}
             </div>
           </div>

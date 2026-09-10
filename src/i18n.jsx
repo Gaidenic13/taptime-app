@@ -232,6 +232,8 @@ const dict = {
     "factory.freshSub": "NFC Tools → Write → URL → paste → hold the tag to the phone → lock the tag.",
     "factory.inventory": "Inventory",
     "factory.unclaimed": "Unclaimed",
+    "factory.sure": "Are you sure you want to remove it?",
+    "factory.confirm": "Yes, remove",
     "set.rename": "Rename",
   },
 
@@ -450,6 +452,8 @@ const dict = {
     "factory.freshSub": "NFC Tools → Write → URL → lipește → ține tag-ul la telefon → blochează tag-ul.",
     "factory.inventory": "Inventar",
     "factory.unclaimed": "Nerevendicat",
+    "factory.sure": "Sigur vrei să-l ștergi?",
+    "factory.confirm": "Da, șterge",
     "set.rename": "Redenumește",
   },
 };
