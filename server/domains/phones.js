@@ -107,8 +107,21 @@ export async function linkStatus(token, device_token) {
   return { ...base, session: await createSession(link.user_id) };
 }
 
-// Old phone asking why its session died.
-export async function phoneReplaced(device_token) {
+// Whose phone is this? The device itself is the credential: if it is still
+// someone's trusted phone, that person can pick their session back up with
+// no admin involved (signing out never un-trusts a phone — only the admin
+// does that). Otherwise: was it replaced by another phone?
+async function trustedOwner(device_token) {
+  if (!device_token) return null;
+  return db.get(`
+    SELECT u.* FROM users u JOIN devices d ON d.id = u.trusted_device_id
+    WHERE d.token = ? AND u.active = 1 AND u.employment_status = 'active' AND u.role = 'employee'
+  `, String(device_token));
+}
+
+export async function phoneStatus(device_token) {
+  const owner = await trustedOwner(device_token);
+  if (owner) return { trusted: true, first_name: owner.first_name };
   if (!device_token) return { replaced: false };
   const row = await db.get(`
     SELECT u.first_name FROM devices d JOIN users u ON u.id = d.user_id
@@ -116,6 +129,14 @@ export async function phoneReplaced(device_token) {
     ORDER BY d.replaced_at DESC
   `, String(device_token));
   return row ? { replaced: true, first_name: row.first_name } : { replaced: false };
+}
+export const phoneReplaced = phoneStatus;
+
+// "Continue as {name}" on a trusted phone: a new session, nothing to approve.
+export async function resumeOnTrustedPhone(device_token) {
+  const owner = await trustedOwner(device_token);
+  if (!owner) { const e = new Error("This phone isn't linked to anyone"); e.status = 403; throw e; }
+  return { user: owner, session: await createSession(owner.id) };
 }
 
 export async function pendingLinks(orgId) {

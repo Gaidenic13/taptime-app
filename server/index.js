@@ -23,7 +23,7 @@ import {
   createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember, makeClaimCode,
 } from "./domains/org.js";
 import {
-  joinClinic, requestPhoneLink, linkStatus, phoneReplaced, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks,
+  joinClinic, requestPhoneLink, linkStatus, phoneStatus, resumeOnTrustedPhone, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks,
 } from "./domains/phones.js";
 import crypto from "crypto";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
@@ -259,7 +259,14 @@ app.get("/api/checkpoint/link/:token", handle(async (req, res) => {
 }));
 // Old phone after a replacement: explain instead of a silent sign-out.
 // (Own path: "/api/checkpoint/phone" would be swallowed by the :code route.)
-app.get("/api/phone-status", handle(async (req) => phoneReplaced(req.headers["x-device-token"])));
+app.get("/api/phone-status", handle(async (req) => phoneStatus(req.headers["x-device-token"])));
+// Signed out on a phone that is still someone's trusted phone: pick the
+// session back up — the device is the credential, no admin round trip.
+app.post("/api/checkpoint/resume", handle(async (req, res) => {
+  const { user, session } = await resumeOnTrustedPhone(req.headers["x-device-token"]);
+  setSessionCookie(res, session);
+  return { session, first_name: user.first_name };
+}));
 
 // Admin decisions on phone links (new accounts and phone changes alike).
 app.post("/api/phone-links/:id/approve", requireAuth, requireManager, handle(async (req) =>
@@ -275,7 +282,7 @@ app.post("/api/employees/:id/unlink-phone", requireAuth, requireAdmin, handle(as
 // Auto-scan for activated phones: an employee session + a fresh challenge is
 // all it takes — the server decides in vs out and records the device.
 app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
-  const { challenge, geo } = req.body || {};
+  const { challenge, geo, action } = req.body || {};
   // A phone linked to a member of another clinic must get a clear answer,
   // not a generic "expired" — the challenge is org-scoped by design.
   const chRow = await db.get("SELECT organization_id FROM attendance_challenges WHERE token = ?", String(challenge || ""));
@@ -288,7 +295,7 @@ app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   const result = await tapToggle(req.user, {
     method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
-    checkpointId: cp.id,
+    checkpointId: cp.id, want: action === "in" || action === "out" ? action : null,
   });
   return { user: { first_name: req.user.first_name }, ...result };
 }));

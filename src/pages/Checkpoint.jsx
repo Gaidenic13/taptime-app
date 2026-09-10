@@ -8,8 +8,8 @@ import { useI18n, LangSwitch } from "../i18n.jsx";
 //  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
 //  · Unlinked phone         → "I'm new" (pending account) or "this is my
 //    phone" (link request); an admin approves; no codes anywhere
-//  · Trusted phone          → automatic: the server records check-in or
-//    check-out (hour, date, device) with no typing at all
+//  · Trusted phone          → one explicit button (Clock in / Clock out),
+//    valid only on a real scan — refreshing the page records nothing
 //  · Any other phone        → can't scan for you, by design
 function ClaimForm({ code }) {
   const { t } = useI18n();
@@ -150,9 +150,16 @@ function DayHistory({ sessions = [], worked = 0 }) {
   );
 }
 
+// Only a real navigation to the tag URL counts as a scan — that is what an
+// NFC tap produces. A refresh or back/forward must never record anything.
+const FRESH_SCAN = (() => {
+  try { const n = performance.getEntriesByType("navigation")[0]; return !n || n.type === "navigate"; }
+  catch { return true; }
+})();
+
 export default function Checkpoint() {
   const { code } = useParams();
-  const { user } = useAuth();
+  const { user, adoptSession } = useAuth();
   const { t } = useI18n();
   const [challenge, setChallenge] = useState(null);
   const [checkpoint, setCheckpoint] = useState(null);
@@ -170,7 +177,7 @@ export default function Checkpoint() {
   const [form, setForm] = useState({ first_name: "", last_name: "" });
   const [wait, setWait] = useState(null); // { status, kind, first_name, replaces }
   const [replaced, setReplaced] = useState(null);
-  const autoFired = useRef(false);
+  const [welcome, setWelcome] = useState(null); // trusted phone, signed out
 
   const isEmployee = user && user.role === "employee";
   const isStaffAdmin = user && user.role !== "employee";
@@ -199,30 +206,47 @@ export default function Checkpoint() {
     if (user) api("/me").then((d) => setToday(d.today)).catch(() => {});
   }, [user]);
 
+  // A member session on this phone without a reload: keeps FRESH_SCAN true,
+  // so the buttons work right after linking or resuming.
+  const takeSession = async (session) => {
+    setToken(session);
+    try { localStorage.removeItem("taptime_link"); } catch {}
+    const me = await api("/me");
+    adoptSession(me.user);
+  };
+
   // Unlinked phone with a request in flight: ask how it went. The first
-  // approved answer carries the member session — store it and start over as
-  // a linked phone (the reload runs the normal auto check-in).
+  // approved answer carries the member session. Otherwise: is this still
+  // someone's trusted phone (signed out), or was it replaced?
   useEffect(() => {
     if (user) return;
     let stored = null;
     try { stored = localStorage.getItem("taptime_link"); } catch {}
     if (stored) {
-      api(`/checkpoint/link/${stored}`).then((d) => {
-        if (d.session) {
-          setToken(d.session);
-          try { localStorage.removeItem("taptime_link"); } catch {}
-          window.location.reload();
-          return;
-        }
+      api(`/checkpoint/link/${stored}`).then(async (d) => {
+        if (d.session) { await takeSession(d.session); return; }
         if (d.status === "unknown") { try { localStorage.removeItem("taptime_link"); } catch {} return; }
         setWait(d); setMode("wait");
       }).catch(() => {});
       return;
     }
     api("/phone-status").then((d) => {
-      if (d.replaced) { setReplaced(d); setMode("replaced"); }
+      if (d.trusted) { setWelcome(d); setMode("welcome"); }
+      else if (d.replaced) { setReplaced(d); setMode("replaced"); }
     }).catch(() => {});
   }, [user]);
+
+  const resume = async () => {
+    setBusy(true); setError("");
+    try {
+      const d = await api("/checkpoint/resume", { method: "POST" });
+      await takeSession(d.session);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const showResult = (d, extra = {}) => {
     const att = d.today.attendance;
@@ -243,29 +267,15 @@ export default function Checkpoint() {
     else setError(e.status === 410 ? t("cp.rescanOut") : e.message);
   };
 
-  // Clock-out must come from a FRESH physical scan: the button only works with
-  // the challenge this page load received, within its 2-minute life. No silent
-  // re-issue — an old tab or bookmark can't clock anyone out.
-  const clockOut = async () => {
-    if (Date.now() - issuedAt.current > 110 * 1000) { setError(t("cp.rescanOut")); return; }
+  // In and out are both explicit button presses, and both need the challenge
+  // this page load received from a real scan, within its 2-minute life. No
+  // silent re-issue — a refreshed tab or a bookmark can't record anything.
+  const tap = async (want) => {
+    if (!FRESH_SCAN || Date.now() - issuedAt.current > 110 * 1000) { setError(t("cp.staleScan")); return; }
     setBusy(true); setError("");
     try {
       const geo = await getGeo();
-      const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
-      showResult(d);
-    } catch (e) {
-      tapError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Check-in for the trusted phone: automatic on the scan itself.
-  const checkIn = async () => {
-    setBusy(true); setError("");
-    try {
-      const geo = await getGeo();
-      const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
+      const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo, action: want } });
       showResult(d);
     } catch (e) {
       tapError(e);
@@ -296,16 +306,6 @@ export default function Checkpoint() {
     try { localStorage.removeItem("taptime_link"); } catch {}
     setWait(null); setError(""); setMode("choose");
   };
-
-  // Trusted phone at ITS OWN clinic: checking IN is automatic; once checked
-  // in, the page shows history and waits for the explicit Clock out tap.
-  useEffect(() => {
-    if (!isEmployee || !challenge || !today || autoFired.current || result || wrongClinic || !trusted) return;
-    const open = today.status === "working" || today.status === "break";
-    if (open) return;
-    autoFired.current = true;
-    checkIn();
-  }, [isEmployee, challenge, today, wrongClinic, trusted]);
 
   // Admin/manager scanning: explicit buttons (they may just be testing).
   const actSession = async (action) => {
@@ -390,21 +390,24 @@ export default function Checkpoint() {
           </>
         )}
 
-        {/* -------- trusted phone at its own clinic -------- */}
-        {!result && isEmployee && checkpoint && today && !wrongClinic && trusted && (
-          (today.status === "working" || today.status === "break") ? (
+        {/* -------- trusted phone at its own clinic: one explicit button -------- */}
+        {!result && isEmployee && checkpoint && today && !wrongClinic && trusted && (() => {
+          const open = today.status === "working" || today.status === "break";
+          return (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
-              <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>
+              <span className={`pill ${open ? today.status : "no_shift"}`}>{t(open ? `status.${today.status}` : "cp.stopped")}</span>
               <DayHistory sessions={today.sessions} worked={today.worked_min} />
-              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={clockOut}>
-                {busy ? t("cp.recording") : t("dash.clockOut")}
-              </button>
+              {FRESH_SCAN ? (
+                <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={() => tap(open ? "out" : "in")}>
+                  {busy ? t("cp.recording") : t(open ? "dash.clockOut" : "dash.clockIn")}
+                </button>
+              ) : (
+                <p className="small muted" style={{ marginTop: 14 }}>{t("cp.staleScan")}</p>
+              )}
             </>
-          ) : (
-            !error && <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
-          )
-        )}
+          );
+        })()}
 
         {/* -------- admin/manager session: explicit buttons -------- */}
         {!result && isStaffAdmin && today && checkpoint && !wrongClinic && (
@@ -438,6 +441,18 @@ export default function Checkpoint() {
               <a href="#cancel" onClick={(e) => { e.preventDefault(); cancelWait(); }}>
                 {wait.status === "pending" ? t("cp.cancelWait") : t("cp.startOver")}
               </a>
+            </p>
+          </>
+        )}
+
+        {/* -------- trusted phone, signed out: pick the session back up -------- */}
+        {unlinked && mode === "welcome" && welcome && (
+          <>
+            <h2 style={{ marginTop: 4 }}>{t("cp.welcomeBack", { name: welcome.first_name })}</h2>
+            <p className="muted small" style={{ marginBottom: 14 }}>{t("cp.welcomeSub")}</p>
+            <button className="btn big" disabled={busy} onClick={resume}>{t("cp.continueAs", { name: welcome.first_name })}</button>
+            <p className="small muted" style={{ marginTop: 12 }}>
+              <a href="#other" onClick={(e) => { e.preventDefault(); setMode("choose"); }}>{t("cp.someoneElse")}</a>
             </p>
           </>
         )}

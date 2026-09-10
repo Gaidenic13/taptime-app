@@ -307,6 +307,7 @@ test("second tag attaches to the SAME clinic as another entrance", async () => {
 test("trusted phone: every link is admin-approved and only that phone scans", async () => {
   const {
     joinClinic, requestPhoneLink, linkStatus, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks, phoneReplaced,
+    resumeOnTrustedPhone,
   } = await import("../domains/phones.js");
   const admin = await db.get("SELECT * FROM users WHERE email = 'box@t.test'");
   const PHONE_A = "phone-a-0123456789abcdef", PHONE_B = "phone-b-0123456789abcdef";
@@ -334,7 +335,11 @@ test("trusted phone: every link is admin-approved and only that phone scans", as
   assert.equal(u.employment_status, "active");
   assert.equal(await isTrustedPhone(u, PHONE_A), true);
   assert.equal(await isTrustedPhone(u, PHONE_B), false);
-  assert.equal((await tapToggle(u, { method: "NFC" })).did, "in");
+  assert.equal((await tapToggle(u, { method: "NFC", want: "in" })).did, "in");
+  // The button pressed must match the state: no accidental flips.
+  await assert.rejects(tapToggle(u, { method: "NFC", want: "in" }), /already clocked in/);
+  assert.equal((await tapToggle(u, { method: "NFC", want: "out" })).did, "out");
+  await assert.rejects(tapToggle(u, { method: "NFC", want: "out" }), /not clocked in/);
 
   // A colleague's phone asks to become Nou's phone: pending + flagged as a
   // replacement; phone A keeps working until the admin decides.
@@ -357,6 +362,9 @@ test("trusted phone: every link is admin-approved and only that phone scans", as
   assert.equal(await isTrustedPhone(u, PHONE_A), false);
   assert.equal((await db.get("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?", nou.id)).n, 0, "old sessions revoked");
   assert.equal((await phoneReplaced(PHONE_A)).replaced, true);
+  // Signing out never un-trusts a phone: B resumes on its own, A cannot.
+  assert.ok((await resumeOnTrustedPhone(PHONE_B)).session);
+  await assert.rejects(resumeOnTrustedPhone(PHONE_A), /isn't linked/);
 
   // Another clinic's admin can't decide; unlink drops the trusted phone.
   const outsider = await db.get("SELECT * FROM users WHERE email = 'e@b.test'");

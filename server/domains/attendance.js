@@ -307,8 +307,13 @@ export async function breakAction(user, action) {
 // Checking IN happens on the scan itself; checking OUT only happens when the
 // person presses the Clock out button on the scan page — so an "out" here is
 // always deliberate. No daily limit — come and go as often as needed.
-export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true, deviceId = null, checkpointId = null } = {}) {
+// `want` ("in"/"out") is the button the person pressed: the server only
+// records the transition that matches the current state, so a stale page or
+// a double press can't flip someone the wrong way.
+export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true, deviceId = null, checkpointId = null, want = null } = {}) {
   const open = await openSession(db, user.id);
+  if (want === "in" && open) { const e = new Error("You're already clocked in — tap the tag and press Clock out when you leave"); e.status = 409; throw e; }
+  if (want === "out" && !open) { const e = new Error("You're not clocked in — tap the tag and press Clock in first"); e.status = 409; throw e; }
   if (!open) {
     return {
       did: "in",
