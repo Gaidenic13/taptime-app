@@ -300,9 +300,9 @@ export async function breakAction(user, action) {
 }
 
 // ---------------------------------------------------------------- tap toggle
-// One-gesture attendance: a scan checks you in if you're out, out if you're in.
-// A scan within 2 minutes of checking in is treated as an accidental double
-// tap. There is no daily limit — scan as many times as you come and go.
+// Checking IN happens on the scan itself; checking OUT only happens when the
+// person presses the Clock out button on the scan page — so an "out" here is
+// always deliberate. No daily limit — come and go as often as needed.
 export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true, deviceId = null, checkpointId = null } = {}) {
   const open = await openSession(db, user.id);
   if (!open) {
@@ -311,10 +311,11 @@ export async function tapToggle(user, { method = "NFC", locationId = null, geo =
       today: await clockIn(user, { method, locationId, geo, viaCheckpoint: true, deviceKnown, deviceId, checkpointId }),
     };
   }
-  if (minutesBetween(open.clock_in, nowIso()) < 2) {
-    return { did: "in_recent", today: await dayStatus(user.id, todayStr()) };
-  }
   return { did: "out", today: await clockOut(user, { method, locationId }) };
+}
+
+export async function hasOpenSession(userId) {
+  return !!(await openSession(db, userId));
 }
 
 // ---------------------------------------------------------------- review queue

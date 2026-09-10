@@ -127,6 +127,28 @@ function ClaimForm({ code }) {
   );
 }
 
+// Today's in/out pairs, shown to the member right on the scan page.
+function DayHistory({ sessions = [], worked = 0 }) {
+  const { t } = useI18n();
+  if (!sessions.length) return null;
+  return (
+    <div className="history" style={{ marginTop: 14 }}>
+      <div className="menu-sec" style={{ margin: "0 0 6px" }}>{t("cp.today")}</div>
+      {sessions.map((s) => (
+        <div className="history-row" key={s.id}>
+          <span>{fmtTime(s.clock_in)}</span>
+          <span className="history-arrow">→</span>
+          <span className={s.clock_out ? "" : "muted"}>{s.clock_out ? fmtTime(s.clock_out) : "…"}</span>
+          <span className="history-dur muted">
+            {s.clock_out ? fmtMin(s.worked_minutes ?? 0) : t("status.working")}
+          </span>
+        </div>
+      ))}
+      <div className="history-total">{t("cp.workedToday", { dur: fmtMin(worked) })}</div>
+    </div>
+  );
+}
+
 export default function Checkpoint() {
   const { code } = useParams();
   const { user } = useAuth();
@@ -144,51 +166,69 @@ export default function Checkpoint() {
   const isEmployee = user && user.role === "employee";
   const isStaffAdmin = user && user.role !== "employee";
 
-  const fetchChallenge = () => {
+  const fetchChallenge = async () => {
     setError("");
-    return api(`/checkpoint/${code}`)
-      .then((d) => {
-        if (d.unclaimed) { setUnclaimed(true); return; }
-        setChallenge(d.challenge); setCheckpoint(d.checkpoint);
-      })
-      .catch((e) => setError(e.message));
+    try {
+      const d = await api(`/checkpoint/${code}`);
+      if (d.unclaimed) { setUnclaimed(true); return null; }
+      setChallenge(d.challenge); setCheckpoint(d.checkpoint);
+      return d.challenge;
+    } catch (e) {
+      setError(e.message);
+      return null;
+    }
   };
 
   useEffect(() => { fetchChallenge(); }, [code]);
   useEffect(() => {
-    if (isStaffAdmin) api("/me").then((d) => setToday(d.today)).catch(() => {});
-  }, [isStaffAdmin]);
+    if (user) api("/me").then((d) => setToday(d.today)).catch(() => {});
+  }, [user]);
 
   const showResult = (d, extra = {}) => {
     const att = d.today.attendance;
+    setToday(d.today);
     setResult({
       name: d.user?.first_name || user?.first_name,
       did: d.did,
       time: d.did === "out" ? fmtTime(att?.clock_out) : fmtTime(att?.clock_in),
       worked: d.today.worked_min,
+      sessions: d.today.sessions || [],
       review: d.today.status === "requires_review",
       ...extra,
     });
   };
 
-  // Activated phone (employee session): the scan itself does everything.
-  useEffect(() => {
-    if (!isEmployee || !challenge || autoFired.current) return;
-    autoFired.current = true;
-    (async () => {
-      setBusy(true);
+  // Toggle for activated phones, with one silent retry on an expired challenge.
+  const doTap = async () => {
+    setBusy(true); setError("");
+    try {
+      const geo = await getGeo();
       try {
-        const geo = await getGeo();
         const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
         showResult(d);
       } catch (e) {
-        setError(e.message);
-        if (e.status === 410) fetchChallenge();
-      } finally {
-        setBusy(false);
+        if (e.status !== 410) throw e;
+        const ch = await fetchChallenge();
+        if (!ch) throw e;
+        const d = await api("/checkpoint/tap", { method: "POST", body: { challenge: ch, geo } });
+        showResult(d);
       }
-    })();
-  }, [isEmployee, challenge]);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Activated phone: checking IN is automatic — but once checked in, clocking
+  // OUT takes a deliberate tap on the button (no accidental checkouts).
+  useEffect(() => {
+    if (!isEmployee || !challenge || !today || autoFired.current || result) return;
+    const open = today.status === "working" || today.status === "break";
+    if (open) return; // show history + explicit Clock out button instead
+    autoFired.current = true;
+    doTap();
+  }, [isEmployee, challenge, today]);
 
   // First scan on this phone: activation code → persistent member session.
   const submitPin = async (fullPin) => {
@@ -257,7 +297,7 @@ export default function Checkpoint() {
         )}
         {!unclaimed && error && <div className="error-box">{error}</div>}
 
-        {/* -------- scan result -------- */}
+        {/* -------- scan result + today's history -------- */}
         {result && (
           <>
             <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: result.name })}</h2>
@@ -268,15 +308,32 @@ export default function Checkpoint() {
                 {result.worked > 0 && <div>{t("cp.workedToday", { dur: fmtMin(result.worked) })}</div>}
               </div>
             )}
-            {result.did === "in_recent" && <div className="ok-box">{t("cp.justIn", { time: result.time })}</div>}
+            {result.did === "linked" && <span className="pill working">{t("status.working")}</span>}
+            <DayHistory sessions={result.sessions} worked={result.worked} />
             {result.activated && <p className="small muted">{t("cp.activated")}</p>}
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
+            {result.did !== "out" && (isEmployee || result.activated) && (
+              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={doTap}>
+                {busy ? t("cp.recording") : t("dash.clockOut")}
+              </button>
+            )}
           </>
         )}
 
-        {/* -------- activated employee phone: busy indicator only -------- */}
-        {!result && isEmployee && checkpoint && (
-          <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
+        {/* -------- activated employee phone -------- */}
+        {!result && isEmployee && checkpoint && today && (
+          (today.status === "working" || today.status === "break") ? (
+            <>
+              <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
+              <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>
+              <DayHistory sessions={today.sessions} worked={today.worked_min} />
+              <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={doTap}>
+                {busy ? t("cp.recording") : t("dash.clockOut")}
+              </button>
+            </>
+          ) : (
+            <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
+          )
         )}
 
         {/* -------- admin/manager session: explicit buttons -------- */}
@@ -316,8 +373,13 @@ export default function Checkpoint() {
           </>
         )}
 
+        {isEmployee && (
+          <p className="small" style={{ marginTop: 16 }}>
+            <Link to="/">{t("cp.myHistory")} →</Link>
+          </p>
+        )}
         {user && (
-          <p className="small muted" style={{ marginTop: 16 }}>
+          <p className="small muted" style={{ marginTop: 6 }}>
             <a href="#notme" onClick={(e) => { e.preventDefault(); notMe(); }}>
               {t("cp.notYou", { name: user.first_name })}
             </a>

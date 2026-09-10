@@ -6,7 +6,7 @@ import { useI18n } from "../i18n.jsx";
 // Mobile overflow menu — settings-style grouped list matching the tab bar's
 // tone: section labels, rounded cards, one row per destination.
 export default function More() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { t } = useI18n();
   const isAdmin = user.role === "admin" || user.role === "owner";
 
@@ -46,6 +46,9 @@ export default function More() {
           </div>
         </React.Fragment>
       ))}
+      <div className="menu-card" style={{ marginTop: 18 }}>
+        <button className="menu-row danger" onClick={logout}>{t("nav.logout")}</button>
+      </div>
     </>
   );
 }

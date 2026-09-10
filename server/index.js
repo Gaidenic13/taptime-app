@@ -7,9 +7,9 @@ import { getSettings, setSetting, DEFAULT_SETTINGS } from "./settings.js";
 import {
   hashPassword, verifyPassword, createSession, destroySession,
   requireAuth, requireManager, requireAdmin, touchDevice, registerKiosk, requireKiosk,
-  assertPinAllowed, recordPinAttempt,
+  assertPinAllowed, recordPinAttempt, setSessionCookie, clearSessionCookie,
 } from "./auth.js";
-import { dayStatus, clockIn, clockOut, breakAction, resolveReview, tapToggle } from "./domains/attendance.js";
+import { dayStatus, clockIn, clockOut, breakAction, resolveReview, tapToggle, hasOpenSession } from "./domains/attendance.js";
 import { createShift, deleteShift, weekShifts } from "./domains/scheduling.js";
 import { coverageFor } from "./domains/staffing.js";
 import {
@@ -113,7 +113,7 @@ app.post("/api/orgs/attach-session", requireAuth, handle(async (req) =>
 ));
 
 // ---------------------------------------------------------------- auth
-app.post("/api/auth/login", handle(async (req) => {
+app.post("/api/auth/login", handle(async (req, res) => {
   const { email, password } = req.body || {};
   const user = email
     ? await db.get("SELECT * FROM users WHERE email = ? AND active = 1", email.trim().toLowerCase())
@@ -127,20 +127,26 @@ app.post("/api/auth/login", handle(async (req) => {
     err.status = 403; throw err;
   }
   const token = await createSession(user.id);
+  setSessionCookie(res, token);
   await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
   await audit({ orgId: user.organization_id, actorId: user.id, action: "login" });
   return { token, user: await publicUser(user) };
 }));
 
-app.post("/api/auth/logout", requireAuth, handle(async (req) => {
+app.post("/api/auth/logout", requireAuth, handle(async (req, res) => {
   await destroySession(req.token);
+  clearSessionCookie(res);
   return { ok: true };
 }));
 
 app.get("/api/me", requireAuth, handle(async (req) => {
   await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
+  const user = await publicUser(req.user);
+  // Members see their own personal code — it's their key on any phone.
+  if (req.user.role === "employee") user.code = req.user.pin || null;
   return {
-    user: await publicUser(req.user),
+    user,
+    token: req.token, // lets a cookie-recognized phone restore its storage token
     today: await dayStatus(req.user.id, todayStr()),
     unread_notifications: await unreadCount(req.user.id),
   };
@@ -204,7 +210,7 @@ app.post("/api/checkpoint/consume", requireAuth, handle(async (req) => {
 // enter your 4-digit PIN, and the server decides in vs out. The challenge
 // scopes the PIN lookup to the checkpoint's organization; wrong PINs are
 // rate-limited per device/IP and never burn the challenge.
-app.post("/api/checkpoint/pin", handle(async (req) => {
+app.post("/api/checkpoint/pin", handle(async (req, res) => {
   const { challenge, pin, geo } = req.body || {};
   const source = req.headers["x-device-token"] || req.ip || "unknown";
   await assertPinAllowed(source);
@@ -229,13 +235,19 @@ app.post("/api/checkpoint/pin", handle(async (req) => {
   const cp = await consumeChallenge(challenge, user);
   if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
   const { known, deviceId } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
-  const result = await tapToggle(user, {
-    method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
-    checkpointId: cp.id,
-  });
+  // Entering the code on a phone while already checked in only LINKS the
+  // phone — it never clocks anyone out; that takes the explicit button.
+  const result = (await hasOpenSession(user.id))
+    ? { did: "linked", today: await dayStatus(user.id, todayStr()) }
+    : await tapToggle(user, {
+        method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
+        checkpointId: cp.id,
+      });
   // Activation: the code is entered once — the phone gets a persistent member
-  // session, so every later scan records in/out with no typing at all.
+  // session (storage token + year-long cookie), so every later scan records
+  // in/out with no typing at all.
   const token = await createSession(user.id);
+  setSessionCookie(res, token);
   return { user: { first_name: user.first_name }, token, ...result };
 }));
 

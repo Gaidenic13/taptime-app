@@ -28,7 +28,10 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 html, body {
-  overflow-x: hidden; /* the page itself only scrolls vertically */
+  /* the page itself only scrolls vertically; `clip` (unlike `hidden`) never
+     turns body into a scroll container, which keeps position:fixed bars stable on iOS */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 body {
   margin: 0;
@@ -121,19 +124,32 @@ button { font-family: var(--font); letter-spacing: -0.01em; }
 .tabbar { display: none; }
 @media (max-width: 760px) {
   .sidebar { display: none; }
-  .main { padding: 16px 18px 104px; }
+  .main { padding: 14px 16px 104px; }
+  h1 { font-size: 24px; }
+  .card { padding: 18px; border-radius: 22px; }
+  .stats { gap: 8px; }
+  .stat { padding: 14px 16px; }
+  .stat .n { font-size: 26px; }
+  .seg { display: flex; flex-wrap: wrap; width: 100%; }
+  .seg button { flex: 1 1 auto; }
+  table { font-size: 13px; }
+  th, td { padding-left: 8px; padding-right: 8px; }
+  /* Solid, own-layer bar: no backdrop blur — iOS Safari drops blurred fixed
+     elements mid-scroll, which is what made the menu "disappear". */
   .tabbar {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    padding: 14px 8px calc(16px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 96%, #fff 4%);
+    box-shadow: 0 -1px 0 var(--hairline);
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    padding: 12px 6px calc(14px + env(safe-area-inset-bottom));
     justify-content: space-around;
   }
   .tabbar a {
     position: relative;
-    font-size: 15px; font-weight: 500; color: var(--muted);
-    padding: 2px 6px 12px;
+    font-size: 14.5px; font-weight: 500; color: var(--muted);
+    padding: 4px 6px 12px;
+    white-space: nowrap;
   }
   .tabbar a.active { color: var(--ink); font-weight: 600; }
   .tabbar a.active::after {
@@ -378,6 +394,37 @@ td strong { font-weight: 600; }
 }
 .shift-chip.mine { background: var(--card-solid); box-shadow: inset 0 0 0 1.5px var(--hairline); }
 
+/* ---------- people list & presence board ---------- */
+.person-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 0; border-bottom: 1px dashed var(--hairline);
+}
+.person-row:last-child { border-bottom: none; }
+.person-main { min-width: 0; flex: 1; }
+.person-main strong { display: block; font-weight: 600; }
+.presence-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center;
+  padding: 13px 0; border-bottom: 1px dashed var(--hairline);
+}
+.presence-row:last-child { border-bottom: none; }
+.presence-name { font-weight: 600; }
+.presence-times { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.presence-times b { color: var(--ink); font-weight: 600; }
+.presence-right { text-align: right; display: grid; gap: 4px; justify-items: end; }
+.presence-worked { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ---------- scan-page day history ---------- */
+.history { text-align: left; }
+.history-row {
+  display: grid; grid-template-columns: auto auto auto 1fr; gap: 8px; align-items: center;
+  padding: 10px 0; border-bottom: 1px dashed var(--hairline);
+  font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.history-row:last-of-type { border-bottom: none; }
+.history-arrow { color: var(--faint); font-weight: 400; }
+.history-dur { text-align: right; font-weight: 500; font-size: 13px; }
+.history-total { padding-top: 10px; font-weight: 600; text-align: right; }
+
 /* ---------- More menu (mobile settings-style list) ---------- */
 .menu-sec {
   margin: 20px 14px 8px;
@@ -407,6 +454,7 @@ td strong { font-weight: 600; }
 .menu-row:last-child { border-bottom: none; }
 .menu-row:active { background: var(--raised); }
 .menu-row .chev { color: var(--faint); font-weight: 500; font-size: 17px; }
+.menu-row.danger { color: var(--red); border: none; background: none; width: 100%; cursor: pointer; font-family: var(--font); }
 
 /* ---------- misc ---------- */
 .seg { display: inline-flex; background: var(--card); border-radius: 999px; padding: 3px; gap: 2px; }

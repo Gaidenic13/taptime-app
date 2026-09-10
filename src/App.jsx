@@ -100,7 +100,8 @@ function Shell({ children }) {
           <div className="topline-actions">
             <span className="mobile-only"><LangSwitch compact /></span>
             <Bell />
-            <button className="btn small subtle mobile-only" onClick={logout}>{t("nav.logout")}</button>
+            {/* Log out lives in the More menu on mobile — keeps the top line uncramped. */}
+            {!isManager && <button className="btn small subtle mobile-only" onClick={logout}>{t("nav.logout")}</button>}
           </div>
         </div>
         {children}
@@ -146,7 +147,11 @@ function AppInner() {
 
   useEffect(() => {
     api("/me")
-      .then((d) => { setUser(d.user); refreshPending(d.user); checkOnboarding(d.user); })
+      .then((d) => {
+        // Phone recognized by the durable cookie alone → restore the storage token too.
+        if (d.token && !localStorage.getItem("taptime_token")) setToken(d.token);
+        setUser(d.user); refreshPending(d.user); checkOnboarding(d.user);
+      })
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps

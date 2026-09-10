@@ -202,64 +202,47 @@ export default function Employees() {
 
   return (
     <>
-      <div className="page-head spread">
-        <div>
-          <h1>{t("emp.title")}</h1>
-          <p>{t("emp.active", { n: employees.filter((e) => e.active).length })}</p>
-        </div>
-        {isAdmin && directory && <button className="btn ghost" onClick={() => setModal(null)}>{t("emp.fullAdd")}</button>}
+      <div className="page-head">
+        <h1>{t("emp.title")}</h1>
+        <p>{t("emp.active", { n: employees.filter((e) => e.active).length })}</p>
       </div>
 
+      {/* Adding someone is just a name — everything else is optional detail
+          reachable later through Edit. */}
       {isAdmin && (
         <div className="card">
-          <h2>{t("emp.add")}</h2>
-          <p className="small muted">{t("emp.quickAdd")}</p>
-          <form className="row" onSubmit={quickAdd} style={{ marginTop: 8 }}>
-            <input value={qFirst} onChange={(e) => setQFirst(e.target.value)} placeholder={t("emp.first")} required style={{ flex: 1, minWidth: 120 }} />
-            <input value={qLast} onChange={(e) => setQLast(e.target.value)} placeholder={t("emp.last")} style={{ flex: 1, minWidth: 120 }} />
+          <form className="row" onSubmit={quickAdd}>
+            <input value={qFirst} onChange={(e) => setQFirst(e.target.value)} placeholder={t("emp.first")} required style={{ flex: 1, minWidth: 110 }} />
+            <input value={qLast} onChange={(e) => setQLast(e.target.value)} placeholder={t("emp.last")} style={{ flex: 1, minWidth: 110 }} />
             <button className="btn">{t("setup.addBtn")}</button>
           </form>
+          <p className="small muted" style={{ marginTop: 8 }}>{t("emp.quickAdd")}</p>
           {error && <div className="error-box">{error}</div>}
-          {justAdded && <div className="ok-box">{justAdded.name} — PIN <strong>{justAdded.pin}</strong></div>}
+          {justAdded && (
+            <div className="ok-box">{justAdded.name} — {t("emp.code")} <strong>{justAdded.pin}</strong></div>
+          )}
         </div>
       )}
 
-      <div className="card table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{t("common.name")}</th><th>{t("emp.jobRole")}</th><th>{t("emp.department")}</th>
-              <th>{t("common.location")}</th><th>{t("common.email")}</th><th>{t("emp.leaveLeft")}</th>
-              <th>{t("emp.access")}</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id} style={e.active ? {} : { opacity: 0.45 }}>
-                <td><strong>{e.first_name} {e.last_name}</strong></td>
-                <td>{e.job_title || "—"}</td>
-                <td>{e.department_name || "—"}</td>
-                <td>{e.location_name || "—"}</td>
-                <td className="small">{e.email}</td>
-                <td>{e.leave_balance}d</td>
-                <td><span className={`pill ${e.role === "employee" ? "no_shift" : "leave"}`}>{e.role}</span></td>
-                <td>
-                  <div className="row">
-                    <button className="btn subtle small" onClick={() => setEntriesFor(e)}>{t("emp.entries")}</button>
-                    {isAdmin && (
-                      <>
-                        <button className="btn subtle small" onClick={() => setModal(e)}>{t("common.edit")}</button>
-                        <button className="btn ghost small" onClick={() => toggleActive(e)}>
-                          {e.active ? t("emp.deactivate") : t("emp.reactivate")}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="card">
+        {employees.length === 0 && <div className="empty">—</div>}
+        {employees.map((e) => (
+          <div className="person-row" key={e.id} style={e.active ? {} : { opacity: 0.45 }}>
+            <div className="person-main">
+              <strong>{e.first_name} {e.last_name}</strong>
+              <div className="small muted">
+                {e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : "")}
+                {e.pin ? ` · ${t("emp.code")} ${e.pin}` : ""}
+              </div>
+            </div>
+            <div className="row" style={{ gap: 6 }}>
+              <button className="btn subtle small" onClick={() => setEntriesFor(e)}>{t("emp.entries")}</button>
+              {isAdmin && (
+                <button className="btn ghost small" onClick={() => setModal(e)}>{t("common.edit")}</button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
 
       {modal !== undefined && directory && (

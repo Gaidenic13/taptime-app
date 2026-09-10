@@ -56,9 +56,39 @@ const guarded = (fn) => (req, res, next) => {
   fn(req, res, next).catch((e) => res.status(500).json({ error: e.message }));
 };
 
+// Durable recognition: besides the Bearer token the client keeps in storage,
+// activation/login also set a long-lived HttpOnly cookie. Server-set cookies
+// survive browser-storage clearing (and iOS's 7-day script-storage cap), so a
+// linked phone stays linked for a year without re-entering the code.
+const SESSION_COOKIE = "tt_session";
+const COOKIE_MAX_AGE_MS = 365 * 24 * 3600 * 1000;
+
+export function setSessionCookie(res, token) {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: !!process.env.VERCEL,
+    maxAge: COOKIE_MAX_AGE_MS,
+    path: "/",
+  });
+}
+
+export function clearSessionCookie(res) {
+  res.clearCookie(SESSION_COOKIE, { path: "/" });
+}
+
+function cookieToken(req) {
+  const raw = req.headers.cookie || "";
+  for (const part of raw.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === SESSION_COOKIE) return decodeURIComponent(v.join("="));
+  }
+  return null;
+}
+
 export const requireAuth = guarded(async (req, res, next) => {
   const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const token = (header.startsWith("Bearer ") ? header.slice(7) : null) || cookieToken(req);
   const user = token
     ? await db.get(
         "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND u.active = 1",
