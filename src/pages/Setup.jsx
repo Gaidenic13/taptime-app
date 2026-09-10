@@ -49,7 +49,7 @@ export default function Setup() {
     setError("");
     try {
       const d = await api("/employees/quick", { method: "POST", body: { first_name: first, last_name: last } });
-      setJustAdded({ name: `${first} ${last}`.trim(), pin: d.pin });
+      setJustAdded({ name: `${first} ${last}`.trim() });
       setFirst(""); setLast("");
       load();
     } catch (err) {
@@ -92,7 +92,7 @@ export default function Setup() {
           </form>
           {error && <div className="error-box">{error}</div>}
           {justAdded && (
-            <div className="ok-box">{justAdded.name} — {t("emp.pin").split("(")[0].trim()} <strong>{justAdded.pin}</strong></div>
+            <div className="ok-box">{t("setup.added", { name: justAdded.name })}</div>
           )}
           {members.length > 0 && (
             <>
@@ -100,7 +100,7 @@ export default function Setup() {
               {members.map((m) => (
                 <div className="list-item spread" key={m.id}>
                   <strong>{m.first_name} {m.last_name}</strong>
-                  <span className="pill no_shift">{m.pin || "—"}</span>
+                  <span className={`pill ${m.phone_linked ? "working" : "no_shift"}`}>{t(m.phone_linked ? "emp.phoneLinked" : "emp.noPhone")}</span>
                 </div>
               ))}
             </>

@@ -140,7 +140,7 @@ function AppInner() {
     try {
       const d = await api("/approvals");
       setPendingCount(
-        (d.members || []).length + d.leaves.length + d.corrections.length + d.overtime.length + d.reviews.length + d.flags.length
+        (d.links || []).length + d.leaves.length + d.corrections.length + d.overtime.length + d.reviews.length + d.flags.length
       );
     } catch { /* non-fatal */ }
   }, [user]);

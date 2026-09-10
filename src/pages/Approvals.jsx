@@ -49,14 +49,14 @@ export default function Approvals() {
     await api(`/flags/${id}/resolve`, { method: "POST", body: { note: "Reviewed" } });
     after(t("ap.flagResolved"));
   };
-  const decideMember = (id) => async (decision) => {
-    await api(`/employees/${id}/${decision === "approved" ? "approve" : "reject"}`, { method: "POST" });
+  const decideLink = (id) => async (decision) => {
+    await api(`/phone-links/${id}/${decision === "approved" ? "approve" : "reject"}`, { method: "POST" });
     after(t(`ap.decided.${decision}`));
   };
 
   if (!data) return null;
-  const members = data.members || [];
-  const total = members.length + data.leaves.length + data.corrections.length + data.overtime.length +
+  const links = data.links || [];
+  const total = links.length + data.leaves.length + data.corrections.length + data.overtime.length +
     data.reviews.length + data.flags.length;
 
   const kindLabel = {
@@ -72,19 +72,26 @@ export default function Approvals() {
       </div>
       {notice && <div className="ok-box">{notice}</div>}
 
-      {members.length > 0 && (
+      {links.length > 0 && (
         <div className="card">
           <h2>{t("team.pendingMembers")}</h2>
           <p className="small muted" style={{ marginTop: -4 }}>{t("team.pendingSub")}</p>
-          {members.map((m) => (
+          {links.map((m) => (
             <div className="list-item spread" key={m.id}>
               <div>
                 <strong>{m.first_name} {m.last_name}</strong>
-                <div className="small muted">{t("ap.askedToJoin")} · {fmtDateTime(m.created_at)}</div>
+                <div className="small muted">
+                  {m.kind === "join" ? t("ap.askedToJoin") : t("ap.newPhone")} · {fmtDateTime(m.created_at)}
+                </div>
+                {m.kind === "link" && (
+                  <div className="small" style={m.replaces ? { color: "var(--red)", fontWeight: 600 } : {}}>
+                    {m.replaces ? t("ap.replacesPhone") : t("ap.firstPhone")}
+                  </div>
+                )}
               </div>
               <div className="row">
-                <button className="btn approve small" onClick={() => decideMember(m.id)("approved")}>{t("common.approve")}</button>
-                <button className="btn danger small" onClick={() => decideMember(m.id)("rejected")}>{t("common.reject")}</button>
+                <button className="btn approve small" onClick={() => decideLink(m.id)("approved")}>{t("common.approve")}</button>
+                <button className="btn danger small" onClick={() => decideLink(m.id)("rejected")}>{t("common.reject")}</button>
               </div>
             </div>
           ))}

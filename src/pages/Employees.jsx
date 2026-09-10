@@ -187,12 +187,19 @@ export default function Employees() {
     setError("");
     try {
       const d = await api("/employees/quick", { method: "POST", body: { first_name: qFirst, last_name: qLast } });
-      setJustAdded({ name: `${qFirst} ${qLast}`.trim(), pin: d.pin });
+      setJustAdded({ name: `${qFirst} ${qLast}`.trim() });
       setQFirst(""); setQLast("");
       load();
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  // Lost/stolen phone: nothing scans for them until a new link is approved.
+  const unlinkPhone = async (emp) => {
+    if (!window.confirm(t("emp.unlinkConfirm", { name: emp.first_name }))) return;
+    await api(`/employees/${emp.id}/unlink-phone`, { method: "POST" });
+    load();
   };
 
   const toggleActive = async (emp) => {
@@ -219,7 +226,7 @@ export default function Employees() {
           <p className="small muted" style={{ marginTop: 8 }}>{t("emp.quickAdd")}</p>
           {error && <div className="error-box">{error}</div>}
           {justAdded && (
-            <div className="ok-box">{justAdded.name} — {t("emp.code")} <strong>{justAdded.pin}</strong></div>
+            <div className="ok-box">{t("setup.added", { name: justAdded.name })}</div>
           )}
         </div>
       )}
@@ -236,12 +243,15 @@ export default function Employees() {
               <div className="small muted">
                 {[
                   e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : null),
-                  e.pin ? `${t("emp.code")} ${e.pin}` : null,
+                  e.role === "employee" ? t(e.phone_linked ? "emp.phoneLinked" : "emp.noPhone") : null,
                 ].filter(Boolean).join(" · ")}
               </div>
             </div>
             <div className="row" style={{ gap: 6 }}>
               <button className="btn subtle small" onClick={() => setEntriesFor(e)}>{t("emp.entries")}</button>
+              {isAdmin && e.phone_linked && (
+                <button className="btn ghost small" onClick={() => unlinkPhone(e)}>{t("emp.unlinkPhone")}</button>
+              )}
               {isAdmin && (
                 <button className="btn ghost small" onClick={() => setModal(e)}>{t("common.edit")}</button>
               )}

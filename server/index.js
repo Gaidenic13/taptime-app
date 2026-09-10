@@ -21,8 +21,10 @@ import {
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
 import {
   createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember, makeClaimCode,
-  joinClinic, setMemberStatus,
 } from "./domains/org.js";
+import {
+  joinClinic, requestPhoneLink, linkStatus, phoneReplaced, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks,
+} from "./domains/phones.js";
 import crypto from "crypto";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
@@ -45,7 +47,7 @@ const handle = (fn) => async (req, res) => {
     const out = await fn(req, res);
     if (out !== undefined) res.json(out);
   } catch (e) {
-    res.status(e.status || 400).json({ error: e.message });
+    res.status(e.status || 400).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
   }
 };
 
@@ -145,8 +147,8 @@ app.post("/api/auth/logout", requireAuth, handle(async (req, res) => {
 app.get("/api/me", requireAuth, handle(async (req) => {
   await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   const user = await publicUser(req.user);
-  // Members see their own personal code — it's their key on any phone.
-  if (req.user.role === "employee") user.code = req.user.pin || null;
+  user.phone_linked = !!req.user.trusted_device_id;
+  user.this_phone_trusted = await isTrustedPhone(req.user, req.deviceToken);
   user.clinic = (await db.get("SELECT name FROM organizations WHERE id = ?", req.orgId))?.name || "";
   return {
     user,
@@ -156,8 +158,20 @@ app.get("/api/me", requireAuth, handle(async (req) => {
   };
 }));
 
+// Members only ever clock from their one trusted phone. A session on any
+// other device (old phone, a colleague's phone) can look but not scan.
+async function assertTrustedPhone(req) {
+  if (req.user.role !== "employee") return;
+  if (await isTrustedPhone(req.user, req.deviceToken)) return;
+  const e = new Error(req.user.trusted_device_id
+    ? "This phone isn't linked to your account — scans only count from your linked phone"
+    : "No phone is linked to your account yet — ask the clinic admin to approve one");
+  e.status = 403; e.code = "phone_not_trusted"; throw e;
+}
+
 // ---------------------------------------------------------------- clock actions (web)
 app.post("/api/attendance/clock-in", requireAuth, handle(async (req) => {
+  await assertTrustedPhone(req);
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   return {
     today: await clockIn(req.user, {
@@ -166,9 +180,10 @@ app.post("/api/attendance/clock-in", requireAuth, handle(async (req) => {
     }),
   };
 }));
-app.post("/api/attendance/clock-out", requireAuth, handle(async (req) => ({
-  today: await clockOut(req.user, { method: "WEB", locationId: req.body?.location_id || null }),
-})));
+app.post("/api/attendance/clock-out", requireAuth, handle(async (req) => {
+  await assertTrustedPhone(req);
+  return { today: await clockOut(req.user, { method: "WEB", locationId: req.body?.location_id || null }) };
+}));
 app.post("/api/attendance/break-start", requireAuth, handle(async (req) => ({ today: await breakAction(req.user, "start") })));
 app.post("/api/attendance/break-end", requireAuth, handle(async (req) => ({ today: await breakAction(req.user, "end") })));
 
@@ -214,80 +229,47 @@ app.post("/api/checkpoint/consume", requireAuth, handle(async (req) => {
   };
 }));
 
-// PIN tap flow (public): the friendliest path for employees — tap the tag,
-// enter your 4-digit PIN, and the server decides in vs out. The challenge
-// scopes the PIN lookup to the checkpoint's organization; wrong PINs are
-// rate-limited per device/IP and never burn the challenge.
-app.post("/api/checkpoint/pin", handle(async (req, res) => {
-  const { challenge, pin, geo } = req.body || {};
-  const source = req.headers["x-device-token"] || req.ip || "unknown";
-  await assertPinAllowed(source);
-
-  const now = new Date().toISOString();
-  const ch = await db.get(
-    "SELECT * FROM attendance_challenges WHERE token = ? AND consumed_at IS NULL AND expires_at > ?",
-    challenge, now
-  );
-  if (!ch) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
-
-  const user = await db.get(
-    "SELECT * FROM users WHERE pin = ? AND pin != '' AND active = 1 AND organization_id = ?",
-    String(pin || ""), ch.organization_id
-  );
-  if (!user) {
-    await recordPinAttempt(source, false);
-    // A declined self-serve request keeps its PIN, so the person gets a clear
-    // answer instead of an endless "wrong code".
-    const declined = await db.get(
-      "SELECT id FROM users WHERE pin = ? AND pin != '' AND employment_status = 'rejected' AND organization_id = ?",
-      String(pin || ""), ch.organization_id
-    );
-    const e = new Error(declined
-      ? "Your request was not approved — talk to the clinic admin."
-      : "PIN not recognized");
-    e.status = declined ? 403 : 401;
-    throw e;
-  }
-  await recordPinAttempt(source, true);
-
-  const cp = await consumeChallenge(challenge, user);
-  if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
-  const { known, deviceId } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
-  // Entering the code on a phone while already checked in only LINKS the
-  // phone — it never clocks anyone out; that takes the explicit button.
-  const result = (await hasOpenSession(user.id))
-    ? { did: "linked", today: await dayStatus(user.id, todayStr()) }
-    : await tapToggle(user, {
-        method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
-        checkpointId: cp.id,
-      });
-  // Activation: the code is entered once — the phone gets a persistent member
-  // session (storage token + year-long cookie), so every later scan records
-  // in/out with no typing at all.
-  const token = await createSession(user.id);
-  setSessionCookie(res, token);
-  return { user: { first_name: user.first_name }, token, ...result };
+// Phone-link flow (public, rate-limited). Nothing typed here is a secret:
+// a newcomer creates a pending account by name; an existing member asks for
+// this phone to become their trusted one. Both wait for an admin decision.
+const linkSource = (req) => req.headers["x-device-token"] || req.ip || "unknown";
+app.post("/api/checkpoint/join", handle(async (req) => {
+  await assertPinAllowed(linkSource(req));
+  const { tag_code, first_name, last_name } = req.body || {};
+  const { user, link } = await joinClinic({
+    tag_code, first_name, last_name, device_token: req.headers["x-device-token"], user_agent: req.headers["user-agent"],
+  });
+  return { link: link.token, first_name: user.first_name, kind: "join" };
 }));
-
-// Self-serve join from the scan page: create your own (pending) account by
-// name; the phone is linked right away, scans count once an admin approves.
-app.post("/api/checkpoint/join", handle(async (req, res) => {
-  const { tag_code, first_name, last_name, pin } = req.body || {};
-  const source = req.headers["x-device-token"] || req.ip || "unknown";
-  await assertPinAllowed(source); // reuse the per-device rate limit
-  const { user } = await joinClinic({ tag_code, first_name, last_name, pin });
-  await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
-  const token = await createSession(user.id);
-  setSessionCookie(res, token);
-  return { token, user: { first_name: user.first_name, employment_status: user.employment_status } };
+app.post("/api/checkpoint/link", handle(async (req) => {
+  await assertPinAllowed(linkSource(req));
+  await recordPinAttempt(linkSource(req), false); // every guess at a name counts against the limit
+  const { tag_code, first_name, last_name } = req.body || {};
+  const { user, link, replaces } = await requestPhoneLink({
+    tag_code, first_name, last_name, device_token: req.headers["x-device-token"], user_agent: req.headers["user-agent"],
+  });
+  return { link: link.token, first_name: user.first_name, kind: "link", replaces };
 }));
+// The phone checks its request on every scan; the first approved check from
+// that phone hands out the member session (storage token + cookie).
+app.get("/api/checkpoint/link/:token", handle(async (req, res) => {
+  const st = await linkStatus(req.params.token, req.headers["x-device-token"]);
+  if (st.session) setSessionCookie(res, st.session);
+  return st;
+}));
+// Old phone after a replacement: explain instead of a silent sign-out.
+// (Own path: "/api/checkpoint/phone" would be swallowed by the :code route.)
+app.get("/api/phone-status", handle(async (req) => phoneReplaced(req.headers["x-device-token"])));
 
-// Admin decisions on self-created accounts.
-app.post("/api/employees/:id/approve", requireAuth, requireManager, handle(async (req) =>
-  setMemberStatus(req.user, Number(req.params.id), "active")
+// Admin decisions on phone links (new accounts and phone changes alike).
+app.post("/api/phone-links/:id/approve", requireAuth, requireManager, handle(async (req) =>
+  decidePhoneLink(req.user, Number(req.params.id), "approved")
 ));
-app.post("/api/employees/:id/reject", requireAuth, requireManager, handle(async (req) =>
-  setMemberStatus(req.user, Number(req.params.id), "rejected")
+app.post("/api/phone-links/:id/reject", requireAuth, requireManager, handle(async (req) =>
+  decidePhoneLink(req.user, Number(req.params.id), "rejected")
+));
+app.post("/api/employees/:id/unlink-phone", requireAuth, requireAdmin, handle(async (req) =>
+  unlinkPhone(req.user, Number(req.params.id))
 ));
 
 // Auto-scan for activated phones: an employee session + a fresh challenge is
@@ -300,6 +282,7 @@ app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
   if (chRow && chRow.organization_id !== req.user.organization_id) {
     const e = new Error("This tag belongs to another clinic"); e.status = 409; throw e;
   }
+  await assertTrustedPhone(req);
   const cp = await consumeChallenge(challenge, req.user);
   if (!cp) { const e = new Error("This scan has expired — tap the tag again"); e.status = 410; throw e; }
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
@@ -435,8 +418,8 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
     ORDER BY jr.name, u.last_name
   `, ...(locationId ? [req.orgId, locationId] : [req.orgId]));
   // Self-created accounts awaiting approval are listed separately, not on the board.
-  const pendingMembers = allUsers.filter((u) => u.employment_status === "pending")
-    .map((u) => ({ id: u.id, name: `${u.first_name} ${u.last_name}` }));
+  const pendingMembers = (await pendingLinks(req.orgId))
+    .map((l) => ({ id: l.id, name: `${l.first_name} ${l.last_name}`, kind: l.kind, replaces: !!l.replaces }));
   const users = allUsers.filter((u) => u.employment_status !== "pending");
   // Entrance names shown per session, but only when the clinic has several.
   const cps = await db.all(
@@ -517,12 +500,18 @@ app.post("/api/notifications/read-all", requireAuth, handle(async (req) => {
 // ---------------------------------------------------------------- org directory
 app.get("/api/employees", requireAuth, requireManager, handle(async (req) => ({
   employees: (await db.all(`
-    SELECT u.*, jr.name AS job_title, l.name AS location_name, d.name AS department_name FROM users u
+    SELECT u.*, jr.name AS job_title, l.name AS location_name, d.name AS department_name,
+      dv.last_seen_at AS phone_last_seen FROM users u
+    LEFT JOIN devices dv ON dv.id = u.trusted_device_id
     LEFT JOIN job_roles jr ON jr.id = u.job_role_id
     LEFT JOIN locations l ON l.id = u.location_id
     LEFT JOIN departments d ON d.id = u.department_id
     WHERE u.organization_id = ? ORDER BY u.active DESC, u.last_name
-  `, req.orgId)).map((u) => { const { password_hash, ...rest } = u; return rest; }),
+  `, req.orgId)).map((u) => {
+    const { password_hash, ...rest } = u;
+    rest.phone_linked = !!u.trusted_device_id;
+    return rest;
+  }),
 })));
 
 // PINs identify employees at checkpoints/kiosks, so they must be unique per org.

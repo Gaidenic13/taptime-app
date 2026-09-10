@@ -224,7 +224,7 @@ test("signup provisions org + admin + checkpoint; quick-add members scan without
 
   // Quick-add: name only → unique PIN, no email.
   const m = await quickAddMember(s.user, { first_name: "Mia", last_name: "Member" });
-  assert.match(m.pin, /^\d{4}$/);
+  assert.ok(m.id, "quick-add returns the member id (no code — phones get linked by the admin)");
   const member = await user(m.id);
   assert.equal(member.email, null);
 
@@ -304,37 +304,65 @@ test("second tag attaches to the SAME clinic as another entrance", async () => {
   }), /already linked/);
 });
 
-test("self-serve join: pending account can't scan until an admin approves it", async () => {
-  const { joinClinic, setMemberStatus } = await import("../domains/org.js");
+test("trusted phone: every link is admin-approved and only that phone scans", async () => {
+  const {
+    joinClinic, requestPhoneLink, linkStatus, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks, phoneReplaced,
+  } = await import("../domains/phones.js");
   const admin = await db.get("SELECT * FROM users WHERE email = 'box@t.test'");
+  const PHONE_A = "phone-a-0123456789abcdef", PHONE_B = "phone-b-0123456789abcdef";
+  const tag = "tag-abc-123";
 
-  const { user: pending, created } = await joinClinic({
-    tag_code: "tag-abc-123", first_name: "Nou", last_name: "Venit", pin: "2468",
+  // Newcomer from phone A: pending account + link request, no code, no session.
+  const { user: nou, link, created } = await joinClinic({
+    tag_code: tag, first_name: "Nou", last_name: "Venit", device_token: PHONE_A, user_agent: "test",
   });
   assert.equal(created, true);
-  assert.equal(pending.employment_status, "pending");
-  assert.equal(pending.pin, "2468"); // the worker's own chosen code
-
-  // A code already used in this clinic is refused; a malformed one too.
-  await assert.rejects(joinClinic({ tag_code: "tag-abc-123", first_name: "Alt", last_name: "Om", pin: "2468" }), /already used/);
-  await assert.rejects(joinClinic({ tag_code: "tag-abc-123", first_name: "Alt", last_name: "Om", pin: "12" }), /4 digits/);
-
-  // Double submit is idempotent.
-  const again = await joinClinic({ tag_code: "tag-abc-123", first_name: "nou", last_name: "VENIT" });
+  assert.equal(nou.employment_status, "pending");
+  assert.equal(nou.pin, "");
+  assert.equal((await linkStatus(link.token, PHONE_A)).status, "pending");
+  const again = await joinClinic({ tag_code: tag, first_name: "nou", last_name: "VENIT", device_token: PHONE_A });
   assert.equal(again.created, false);
-  assert.equal(again.user.id, pending.id);
+  assert.equal(again.link.id, link.id);
+  await assert.rejects(tapToggle(await user(nou.id), { method: "NFC" }), /waiting for the clinic admin/);
 
-  // Scans refused while pending.
-  await assert.rejects(tapToggle(await user(pending.id), { method: "NFC" }), /waiting for the clinic admin/);
+  // Approve → account active, phone A trusted, the session goes to phone A exactly once.
+  await decidePhoneLink(admin, link.id, "approved");
+  assert.equal((await linkStatus(link.token, PHONE_B)).session, undefined, "another phone can't take the session");
+  assert.ok((await linkStatus(link.token, PHONE_A)).session);
+  assert.equal((await linkStatus(link.token, PHONE_A)).session, undefined, "exchanged once");
+  let u = await user(nou.id);
+  assert.equal(u.employment_status, "active");
+  assert.equal(await isTrustedPhone(u, PHONE_A), true);
+  assert.equal(await isTrustedPhone(u, PHONE_B), false);
+  assert.equal((await tapToggle(u, { method: "NFC" })).did, "in");
 
-  // Admin approves → scanning works.
-  await setMemberStatus(admin, pending.id, "active");
-  const r = await tapToggle(await user(pending.id), { method: "NFC" });
-  assert.equal(r.did, "in");
+  // A colleague's phone asks to become Nou's phone: pending + flagged as a
+  // replacement; phone A keeps working until the admin decides.
+  const { link: swap, replaces } = await requestPhoneLink({
+    tag_code: tag, first_name: "nou", last_name: "", device_token: PHONE_B, user_agent: "x",
+  });
+  assert.equal(replaces, true);
+  assert.ok((await pendingLinks(admin.organization_id)).some((l) => l.id === swap.id && l.replaces === 1));
+  assert.equal(await isTrustedPhone(await user(nou.id), PHONE_A), true);
+  await assert.rejects(requestPhoneLink({ tag_code: tag, first_name: "Nimeni", device_token: PHONE_B }), /couldn't find/);
+  await assert.rejects(requestPhoneLink({ tag_code: tag, first_name: "Nou", last_name: "Venit", device_token: PHONE_A }), /already linked/);
 
-  // Another org's admin cannot approve.
+  // Rejected → nothing changes. Approved replacement → phone A dies, B is the one.
+  await decidePhoneLink(admin, swap.id, "rejected");
+  assert.equal(await isTrustedPhone(await user(nou.id), PHONE_A), true);
+  const { link: swap2 } = await requestPhoneLink({ tag_code: tag, first_name: "Nou", last_name: "Venit", device_token: PHONE_B });
+  await decidePhoneLink(admin, swap2.id, "approved");
+  u = await user(nou.id);
+  assert.equal(await isTrustedPhone(u, PHONE_B), true);
+  assert.equal(await isTrustedPhone(u, PHONE_A), false);
+  assert.equal((await db.get("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?", nou.id)).n, 0, "old sessions revoked");
+  assert.equal((await phoneReplaced(PHONE_A)).replaced, true);
+
+  // Another clinic's admin can't decide; unlink drops the trusted phone.
   const outsider = await db.get("SELECT * FROM users WHERE email = 'e@b.test'");
-  await assert.rejects(setMemberStatus({ ...outsider, role: "admin" }, pending.id, "active"), /not found/);
+  await assert.rejects(decidePhoneLink({ ...outsider, role: "admin" }, swap2.id, "approved"), /not found/);
+  await unlinkPhone(admin, nou.id);
+  assert.equal((await user(nou.id)).trusted_device_id, null);
 });
 
 // ---------------------------------------------------------------- corrections audit

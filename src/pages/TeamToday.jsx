@@ -60,12 +60,18 @@ export default function TeamToday() {
           <p className="small muted">{t("team.pendingSub")}</p>
           {data.pending.map((p) => (
             <div className="person-row" key={p.id}>
-              <div className="person-main"><strong>{p.name}</strong></div>
+              <div className="person-main">
+                <strong>{p.name}</strong>
+                <div className="small muted">
+                  {p.kind === "join" ? t("ap.askedToJoin") : t("ap.newPhone")}
+                  {p.kind === "link" && ` · ${p.replaces ? t("ap.replacesPhone") : t("ap.firstPhone")}`}
+                </div>
+              </div>
               <div className="row" style={{ gap: 6 }}>
-                <button className="btn approve small" onClick={async () => { await api(`/employees/${p.id}/approve`, { method: "POST" }); load(locId); }}>
+                <button className="btn approve small" onClick={async () => { await api(`/phone-links/${p.id}/approve`, { method: "POST" }); load(locId); }}>
                   {t("common.approve")}
                 </button>
-                <button className="btn danger small" onClick={async () => { await api(`/employees/${p.id}/reject`, { method: "POST" }); load(locId); }}>
+                <button className="btn danger small" onClick={async () => { await api(`/phone-links/${p.id}/reject`, { method: "POST" }); load(locId); }}>
                   {t("common.reject")}
                 </button>
               </div>

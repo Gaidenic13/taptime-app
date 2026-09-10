@@ -6,10 +6,11 @@ import { useI18n, LangSwitch } from "../i18n.jsx";
 
 // The scan page — the only thing employees ever touch.
 //  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
-//  · First scan on a phone  → enter your activation code once; the phone is
-//    linked to you from then on
-//  · Every later scan       → automatic: the server records check-in or
+//  · Unlinked phone         → "I'm new" (pending account) or "this is my
+//    phone" (link request); an admin approves; no codes anywhere
+//  · Trusted phone          → automatic: the server records check-in or
 //    check-out (hour, date, device) with no typing at all
+//  · Any other phone        → can't scan for you, by design
 function ClaimForm({ code }) {
   const { t } = useI18n();
   const { user, adoptSession } = useAuth();
@@ -157,24 +158,23 @@ export default function Checkpoint() {
   const [checkpoint, setCheckpoint] = useState(null);
   const [today, setToday] = useState(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState(null); // { name, did, time, worked, review, activated }
+  const [result, setResult] = useState(null); // { name, did, time, worked, review }
   const [busy, setBusy] = useState(false);
-  const [pin, setPin] = useState("");
   const [unclaimed, setUnclaimed] = useState(false);
-  // Fresh phone: "choose" (first time here?) → "pin" (existing member) or
-  // "join" (create account). "Not me" / wrong-clinic go straight to "pin".
+  // Unlinked phone: "choose" → "join" (new account) or "link" (my phone);
+  // "wait" while an admin decides; "replaced" when this phone was swapped out.
   const [mode, setMode] = useState(() => {
     try { const m = sessionStorage.getItem("tt_cp_mode"); sessionStorage.removeItem("tt_cp_mode"); return m || "choose"; }
     catch { return "choose"; }
   });
-  const [unknownPin, setUnknownPin] = useState(""); // code typed that matched nobody
-  const [join, setJoin] = useState({ first_name: "", last_name: "", pin: "" });
-  const [joined, setJoined] = useState(null); // first name after a join request
+  const [form, setForm] = useState({ first_name: "", last_name: "" });
+  const [wait, setWait] = useState(null); // { status, kind, first_name, replaces }
+  const [replaced, setReplaced] = useState(null);
   const autoFired = useRef(false);
-  const memberStatus = user?.employment_status || "active";
 
   const isEmployee = user && user.role === "employee";
   const isStaffAdmin = user && user.role !== "employee";
+  const trusted = !isEmployee || user.this_phone_trusted !== false;
   const issuedAt = useRef(0);
   // A phone linked to someone at a different clinic than this tag's.
   const wrongClinic = !!(user && checkpoint && checkpoint.organization_id &&
@@ -199,6 +199,31 @@ export default function Checkpoint() {
     if (user) api("/me").then((d) => setToday(d.today)).catch(() => {});
   }, [user]);
 
+  // Unlinked phone with a request in flight: ask how it went. The first
+  // approved answer carries the member session — store it and start over as
+  // a linked phone (the reload runs the normal auto check-in).
+  useEffect(() => {
+    if (user) return;
+    let stored = null;
+    try { stored = localStorage.getItem("taptime_link"); } catch {}
+    if (stored) {
+      api(`/checkpoint/link/${stored}`).then((d) => {
+        if (d.session) {
+          setToken(d.session);
+          try { localStorage.removeItem("taptime_link"); } catch {}
+          window.location.reload();
+          return;
+        }
+        if (d.status === "unknown") { try { localStorage.removeItem("taptime_link"); } catch {} return; }
+        setWait(d); setMode("wait");
+      }).catch(() => {});
+      return;
+    }
+    api("/phone-status").then((d) => {
+      if (d.replaced) { setReplaced(d); setMode("replaced"); }
+    }).catch(() => {});
+  }, [user]);
+
   const showResult = (d, extra = {}) => {
     const att = d.today.attendance;
     setToday(d.today);
@@ -213,6 +238,11 @@ export default function Checkpoint() {
     });
   };
 
+  const tapError = (e) => {
+    if (e.code === "phone_not_trusted") setError(t("cp.notTrusted"));
+    else setError(e.status === 410 ? t("cp.rescanOut") : e.message);
+  };
+
   // Clock-out must come from a FRESH physical scan: the button only works with
   // the challenge this page load received, within its 2-minute life. No silent
   // re-issue — an old tab or bookmark can't clock anyone out.
@@ -224,13 +254,13 @@ export default function Checkpoint() {
       const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
       showResult(d);
     } catch (e) {
-      setError(e.status === 410 ? t("cp.rescanOut") : e.message);
+      tapError(e);
     } finally {
       setBusy(false);
     }
   };
 
-  // Check-in for activated phones: automatic on the scan itself.
+  // Check-in for the trusted phone: automatic on the scan itself.
   const checkIn = async () => {
     setBusy(true); setError("");
     try {
@@ -238,20 +268,23 @@ export default function Checkpoint() {
       const d = await api("/checkpoint/tap", { method: "POST", body: { challenge, geo } });
       showResult(d);
     } catch (e) {
-      setError(e.message);
+      tapError(e);
     } finally {
       setBusy(false);
     }
   };
 
-  // Self-serve account: name + own personal code → pending until approved.
-  const submitJoin = async (e) => {
+  // "I'm new" / "this is my phone": both end in a request the admin decides.
+  const submitRequest = async (e) => {
     e.preventDefault();
     setBusy(true); setError("");
     try {
-      const d = await api("/checkpoint/join", { method: "POST", body: { ...join, tag_code: code } });
-      if (d.token) setToken(d.token); // phone linked right away
-      setJoined(d.user.first_name);
+      const d = await api(mode === "join" ? "/checkpoint/join" : "/checkpoint/link", {
+        method: "POST", body: { ...form, tag_code: code },
+      });
+      try { localStorage.setItem("taptime_link", d.link); } catch {}
+      setWait({ status: "pending", kind: d.kind, first_name: d.first_name, replaces: !!d.replaces });
+      setMode("wait");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -259,46 +292,20 @@ export default function Checkpoint() {
     }
   };
 
-  // Activated phone at ITS OWN clinic: checking IN is automatic; once checked
+  const cancelWait = () => {
+    try { localStorage.removeItem("taptime_link"); } catch {}
+    setWait(null); setError(""); setMode("choose");
+  };
+
+  // Trusted phone at ITS OWN clinic: checking IN is automatic; once checked
   // in, the page shows history and waits for the explicit Clock out tap.
   useEffect(() => {
-    if (!isEmployee || !challenge || !today || autoFired.current || result || wrongClinic) return;
-    if (memberStatus !== "active") return; // pending/rejected accounts don't scan
+    if (!isEmployee || !challenge || !today || autoFired.current || result || wrongClinic || !trusted) return;
     const open = today.status === "working" || today.status === "break";
     if (open) return;
     autoFired.current = true;
     checkIn();
-  }, [isEmployee, challenge, today, wrongClinic]);
-
-  // First scan on this phone: activation code → persistent member session.
-  const submitPin = async (fullPin) => {
-    setBusy(true); setError("");
-    try {
-      const geo = await getGeo();
-      const d = await api("/checkpoint/pin", {
-        method: "POST",
-        body: { challenge, pin: fullPin, geo },
-      });
-      if (d.token) setToken(d.token); // link this phone
-      showResult(d, { activated: true });
-    } catch (e) {
-      // Nobody has this code: it's most likely a newcomer who typed the code
-      // they'd like — offer to create the account with it, not a dead end.
-      if (e.status === 401) { setUnknownPin(fullPin); setError(t("cp.unknownPin")); }
-      else setError(e.status === 403 ? t("cp.rejected") : e.message);
-      if (e.status === 410) fetchChallenge();
-    } finally {
-      setPin("");
-      setBusy(false);
-    }
-  };
-
-  const press = (digit) => {
-    if (busy) return;
-    const next = pin + digit;
-    setPin(next);
-    if (next.length === 4) submitPin(next);
-  };
+  }, [isEmployee, challenge, today, wrongClinic, trusted]);
 
   // Admin/manager scanning: explicit buttons (they may just be testing).
   const actSession = async (action) => {
@@ -316,21 +323,17 @@ export default function Checkpoint() {
     }
   };
 
-  // Unlink this phone: the session cookie is HttpOnly, so the server has to
-  // clear it too — otherwise the reload silently logs the same person back in.
-  const notMe = async () => {
+  // Disconnect this phone: the session cookie is HttpOnly, so the server has
+  // to clear it too — otherwise the reload silently signs the same person in.
+  const disconnect = async (nextMode = "choose") => {
     try { await api("/auth/logout", { method: "POST" }); } catch {}
     setToken(null);
-    try { sessionStorage.setItem("tt_cp_mode", "pin"); } catch {}
+    try { sessionStorage.setItem("tt_cp_mode", nextMode); } catch {}
     window.location.reload();
   };
 
-  const startJoin = (withPin = "") => {
-    setJoin((j) => ({ ...j, pin: withPin || j.pin }));
-    setUnknownPin(""); setError(""); setMode("join");
-  };
-
   const s = today?.status;
+  const unlinked = !result && !user && checkpoint;
 
   return (
     <div className="checkpoint-wrap">
@@ -360,9 +363,7 @@ export default function Checkpoint() {
                 {result.worked > 0 && <div>{t("cp.workedToday", { dur: fmtMin(result.worked) })}</div>}
               </div>
             )}
-            {result.did === "linked" && <span className="pill working">{t("status.working")}</span>}
             <DayHistory sessions={result.sessions} worked={result.worked} />
-            {result.activated && <p className="small muted">{t("cp.activated")}</p>}
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
             {/* Never a Clock out button here: this page's scan was just used. */}
             {result.did !== "out" && <p className="small muted">{t("cp.scanToOut")}</p>}
@@ -375,24 +376,22 @@ export default function Checkpoint() {
             <div className="error-box" style={{ textAlign: "left" }}>
               {t("cp.wrongClinic", { name: user.first_name, mine: user.clinic || "?", clinic: checkpoint.clinic })}
             </div>
-            <button className="btn big" onClick={notMe}>
+            <button className="btn big" onClick={() => disconnect("link")}>
               {t("cp.wrongClinicAction", { clinic: checkpoint.clinic })}
             </button>
           </>
         )}
 
-        {/* -------- just requested an account -------- */}
-        {joined && <div className="ok-box">{t("cp.pending", { name: joined })}</div>}
-
-        {/* -------- linked phone, account not (yet) approved -------- */}
-        {!result && !joined && isEmployee && checkpoint && !wrongClinic && memberStatus !== "active" && (
-          memberStatus === "pending"
-            ? <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>
-            : <div className="error-box">{t("cp.rejected")}</div>
+        {/* -------- member session on a phone that is NOT their trusted one -------- */}
+        {!result && isEmployee && checkpoint && !wrongClinic && !trusted && (
+          <>
+            <div className="error-box" style={{ textAlign: "left" }}>{t("cp.notTrusted")}</div>
+            <button className="btn big" onClick={() => disconnect("link")}>{t("cp.linkAgain")}</button>
+          </>
         )}
 
-        {/* -------- activated employee phone at its own clinic -------- */}
-        {!result && !joined && isEmployee && checkpoint && today && !wrongClinic && memberStatus === "active" && (
+        {/* -------- trusted phone at its own clinic -------- */}
+        {!result && isEmployee && checkpoint && today && !wrongClinic && trusted && (
           (today.status === "working" || today.status === "break") ? (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
@@ -403,7 +402,7 @@ export default function Checkpoint() {
               </button>
             </>
           ) : (
-            <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
+            !error && <p className="muted" style={{ marginTop: 10 }}>{t("cp.recording")}</p>
           )
         )}
 
@@ -425,80 +424,79 @@ export default function Checkpoint() {
           </>
         )}
 
-        {/* -------- fresh phone: first time here, or already a member? -------- */}
-        {!result && !joined && !user && checkpoint && mode === "choose" && (
+        {/* -------- unlinked phone: waiting for the admin -------- */}
+        {unlinked && mode === "wait" && wait && (
+          <>
+            {wait.status === "pending" && (
+              <div className="ok-box" style={{ textAlign: "left" }}>
+                {t(wait.kind === "join" ? "cp.pending" : "cp.waitLink", { name: wait.first_name })}
+                {wait.replaces && <div style={{ marginTop: 6 }}>{t("cp.waitReplace")}</div>}
+              </div>
+            )}
+            {wait.status === "rejected" && <div className="error-box">{t("cp.linkRejected")}</div>}
+            <p className="small muted" style={{ marginTop: 12 }}>
+              <a href="#cancel" onClick={(e) => { e.preventDefault(); cancelWait(); }}>
+                {wait.status === "pending" ? t("cp.cancelWait") : t("cp.startOver")}
+              </a>
+            </p>
+          </>
+        )}
+
+        {/* -------- this phone was replaced by another one -------- */}
+        {unlinked && mode === "replaced" && replaced && (
+          <>
+            <div className="error-box" style={{ textAlign: "left" }}>{t("cp.replaced", { name: replaced.first_name })}</div>
+            <button className="btn big" onClick={() => { setError(""); setMode("link"); }}>{t("cp.linkAgain")}</button>
+            <p className="small muted" style={{ marginTop: 12 }}>
+              <a href="#other" onClick={(e) => { e.preventDefault(); setMode("choose"); }}>{t("cp.someoneElse")}</a>
+            </p>
+          </>
+        )}
+
+        {/* -------- unlinked phone: first time here, or already a member? -------- */}
+        {unlinked && mode === "choose" && (
           <>
             <h2 style={{ marginTop: 4 }}>{t("cp.chooseTitle")}</h2>
             <p className="muted small" style={{ marginBottom: 18 }}>{t("cp.chooseSub", { clinic: checkpoint.clinic })}</p>
-            <button className="btn big" onClick={() => startJoin()}>{t("cp.chooseNew")}</button>
-            <button className="btn ghost big" style={{ marginTop: 10 }} onClick={() => { setError(""); setMode("pin"); }}>
+            <button className="btn big" onClick={() => { setError(""); setMode("join"); }}>{t("cp.chooseNew")}</button>
+            <button className="btn ghost big" style={{ marginTop: 10 }} onClick={() => { setError(""); setMode("link"); }}>
               {t("cp.chooseHave")}
             </button>
           </>
         )}
 
-        {/* -------- existing member on a new phone: enter your code -------- */}
-        {!result && !joined && !user && checkpoint && mode === "pin" && (
-          <>
-            <p className="muted" style={{ marginBottom: 2 }}>{t("cp.enterPin")}</p>
-            <p className="small muted">{t("cp.pinSub")}</p>
-            <div className="pin-dots">
-              {[0, 1, 2, 3].map((i) => <span key={i} className={i < pin.length ? "on" : ""} />)}
-            </div>
-            <div className="pin-pad">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
-                <button key={n} disabled={busy} onClick={() => press(String(n))}>{n}</button>
-              ))}
-              <button disabled={busy} onClick={() => setPin("")}>C</button>
-              <button disabled={busy} onClick={() => press("0")}>0</button>
-              <button disabled={busy} onClick={() => setPin(pin.slice(0, -1))}>⌫</button>
-            </div>
-            {unknownPin ? (
-              <button className="btn big" style={{ marginTop: 14 }} onClick={() => startJoin(unknownPin)}>
-                {t("cp.createWithPin", { pin: unknownPin })}
-              </button>
-            ) : (
-              <button className="btn ghost big" style={{ marginTop: 14 }} onClick={() => startJoin()}>
-                {t("cp.newHere")}
-              </button>
-            )}
-          </>
-        )}
-
-        {!result && !joined && !user && checkpoint && mode === "join" && (
-          <form onSubmit={submitJoin} style={{ textAlign: "left", marginTop: 8 }}>
-            <h2 style={{ textAlign: "center" }}>{t("cp.joinTitle")}</h2>
-            <p className="muted small" style={{ textAlign: "center" }}>{t("cp.joinSub")}</p>
+        {/* -------- name form: new account, or link this phone -------- */}
+        {unlinked && (mode === "join" || mode === "link") && (
+          <form onSubmit={submitRequest} style={{ textAlign: "left", marginTop: 8 }}>
+            <h2 style={{ textAlign: "center" }}>{t(mode === "join" ? "cp.joinTitle" : "cp.linkTitle")}</h2>
+            <p className="muted small" style={{ textAlign: "center" }}>{t(mode === "join" ? "cp.joinSub" : "cp.linkSub")}</p>
             <div className="grid2">
               <label className="field"><span>{t("emp.first")}</span>
-                <input value={join.first_name} onChange={(e) => setJoin({ ...join, first_name: e.target.value })} required autoFocus />
+                <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required autoFocus />
               </label>
               <label className="field"><span>{t("emp.last")}</span>
-                <input value={join.last_name} onChange={(e) => setJoin({ ...join, last_name: e.target.value })} />
+                <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
               </label>
             </div>
-            <label className="field"><span>{t("cp.joinCode")}</span>
-              <input value={join.pin} inputMode="numeric" pattern="\d{4}" maxLength={4} placeholder="••••" required
-                onChange={(e) => setJoin({ ...join, pin: e.target.value.replace(/\D/g, "").slice(0, 4) })}
-                style={{ textAlign: "center", letterSpacing: "0.4em", fontWeight: 600, fontSize: 20 }} />
-              <span className="small" style={{ marginTop: 4 }}>{t("cp.joinCodeHint")}</span>
-            </label>
-            {error && <div className="error-box">{error}</div>}
-            <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.joinBtn")}</button>
+            <button className="btn big" disabled={busy}>
+              {busy ? t("cp.recording") : t(mode === "join" ? "cp.joinBtn" : "cp.linkBtn")}
+            </button>
             <p className="small muted" style={{ textAlign: "center", marginTop: 12 }}>
-              <a href="#code" onClick={(e) => { e.preventDefault(); setMode("pin"); setError(""); }}>{t("cp.haveCode")}</a>
+              <a href="#other" onClick={(e) => { e.preventDefault(); setError(""); setMode(mode === "join" ? "link" : "join"); }}>
+                {t(mode === "join" ? "cp.chooseHave" : "cp.newHere")}
+              </a>
             </p>
           </form>
         )}
 
-        {isEmployee && (
+        {isEmployee && trusted && (
           <p className="small" style={{ marginTop: 16 }}>
             <Link to="/">{t("cp.myHistory")} →</Link>
           </p>
         )}
         {user && (
           <p className="small muted" style={{ marginTop: 6 }}>
-            <a href="#notme" onClick={(e) => { e.preventDefault(); notMe(); }}>
+            <a href="#notme" onClick={(e) => { e.preventDefault(); disconnect("choose"); }}>
               {t("cp.notYou", { name: user.first_name })}
             </a>
           </p>

@@ -74,11 +74,9 @@ export default function MemberHome() {
           </div>
         )}
 
-        {user.code && (
+        {user.this_phone_trusted && (
           <div className="card tinted" style={{ marginTop: 18, padding: 14 }}>
-            <div className="small muted">{t("member.yourCode")}</div>
-            <div style={{ fontSize: 28, fontWeight: 600, letterSpacing: "0.12em" }}>{user.code}</div>
-            <div className="small muted">{t("member.codeNote")}</div>
+            <div className="small muted">{t("member.phoneNote")}</div>
           </div>
         )}
         <p className="small muted" style={{ marginTop: 14 }}>{t("member.note")}</p>

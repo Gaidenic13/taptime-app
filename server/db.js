@@ -100,6 +100,25 @@ CREATE TABLE IF NOT EXISTS devices (
   UNIQUE(user_id, token)
 );
 
+-- A phone asking to become someone's trusted phone (their only way to scan).
+-- kind 'join' = created a new account from the tag; 'link' = existing member
+-- on a new phone. Approved by an admin; the phone then exchanges the token
+-- for a member session exactly once.
+CREATE TABLE IF NOT EXISTS phone_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT UNIQUE NOT NULL,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  device_token TEXT NOT NULL,
+  user_agent TEXT DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'link',
+  status TEXT NOT NULL DEFAULT 'pending',
+  exchanged_at TEXT,
+  decided_by INTEGER REFERENCES users(id),
+  decided_at TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS shifts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
@@ -377,6 +396,21 @@ if (isPg) {
     },
     close: async () => raw.close(),
   };
+}
+
+// Columns added after a table shipped. "ADD COLUMN IF NOT EXISTS" is pg-only,
+// so on SQLite the failure for an existing column is swallowed instead.
+const ADDED_COLUMNS = [
+  ["users", "trusted_device_id", "INTEGER"],
+  ["devices", "replaced_at", "TEXT"],
+];
+for (const [table, column, type] of ADDED_COLUMNS) {
+  if (isPg) {
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`);
+  } else {
+    try { await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`); }
+    catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
+  }
 }
 
 export { db };
