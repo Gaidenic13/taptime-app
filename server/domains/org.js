@@ -189,7 +189,7 @@ export async function joinClinic({ tag_code, first_name, last_name, pin: chosen 
   });
   const { notifyManagers } = await import("./notifications.js");
   await notifyManagers(cp.organization_id, "join_request",
-    `${first} ${last} asked to join`, "Approve them from Team Today", "/team");
+    `${first} ${last} asked to join`, "Approve or reject them under Approvals", "/approvals");
   return { user: await db.get("SELECT * FROM users WHERE id = ?", id), created: true };
 }
 

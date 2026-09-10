@@ -62,10 +62,10 @@ export default function TeamToday() {
             <div className="person-row" key={p.id}>
               <div className="person-main"><strong>{p.name}</strong></div>
               <div className="row" style={{ gap: 6 }}>
-                <button className="btn small" onClick={async () => { await api(`/employees/${p.id}/approve`, { method: "POST" }); load(locId); }}>
+                <button className="btn approve small" onClick={async () => { await api(`/employees/${p.id}/approve`, { method: "POST" }); load(locId); }}>
                   {t("common.approve")}
                 </button>
-                <button className="btn ghost small" onClick={async () => { await api(`/employees/${p.id}/reject`, { method: "POST" }); load(locId); }}>
+                <button className="btn danger small" onClick={async () => { await api(`/employees/${p.id}/reject`, { method: "POST" }); load(locId); }}>
                   {t("common.reject")}
                 </button>
               </div>

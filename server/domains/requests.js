@@ -85,7 +85,17 @@ export async function pendingApprovals(orgId) {
     ORDER BY f.created_at DESC
   `, orgId);
 
+  // Self-serve accounts created from the tag, waiting for an admin.
+  const members = await db.all(`
+    SELECT u.id, u.first_name, u.last_name,
+      (SELECT MAX(a.created_at) FROM audit_log a
+        WHERE a.entity_type = 'user' AND a.entity_id = u.id AND a.action = 'member_join_request') AS created_at
+    FROM users u
+    WHERE u.organization_id = ? AND u.employment_status = 'pending' AND u.active = 1 ORDER BY u.id
+  `, orgId);
+
   return {
+    members,
     leaves,
     corrections: await join("corrections"),
     overtime: await join("overtime"),

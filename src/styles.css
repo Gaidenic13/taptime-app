@@ -212,6 +212,7 @@ button { font-family: var(--font); letter-spacing: -0.01em; }
 .btn.subtle { background: var(--raised); color: var(--ink); }
 .btn.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--hairline); }
 .btn.danger { background: var(--red); color: #fff; }
+.btn.approve { background: var(--green); color: #fff; }
 .btn.gold { background: var(--amber); color: #fff; }
 .btn.small { padding: 8px 16px; font-size: 13px; }
 .btn.accent { background: var(--accent); color: #fff; }

@@ -126,7 +126,7 @@ const dict = {
     "team.clockIn": "In", "team.clockOut": "Out", "team.risk": "Risk",
     "team.allLocations": "All locations",
     // approvals
-    "ap.title": "Approvals", "ap.clear": "Nothing pending — all clear.",
+    "ap.title": "Approvals", "ap.askedToJoin": "Asked to join by scanning the tag", "ap.clear": "Nothing pending — all clear.",
     "ap.waiting": "{n} items waiting for your decision", "ap.waitingOne": "1 item waiting for your decision",
     "ap.reviews": "High-risk attendance — needs review", "ap.signals": "Signals",
     "ap.stillOpen": "still open", "ap.method": "method", "ap.noLocation": "no location",
@@ -382,7 +382,7 @@ const dict = {
     "team.coverage": "Acoperirea pe roluri azi", "team.presentOf": "{a} / {b} prezenți",
     "team.clockIn": "Intrare", "team.clockOut": "Ieșire", "team.risk": "Risc",
     "team.allLocations": "Toate locațiile",
-    "ap.title": "Aprobări", "ap.clear": "Nimic în așteptare — totul e la zi.",
+    "ap.title": "Aprobări", "ap.askedToJoin": "A cerut să se alăture scanând tag-ul", "ap.clear": "Nimic în așteptare — totul e la zi.",
     "ap.waiting": "{n} elemente așteaptă decizia ta", "ap.waitingOne": "1 element așteaptă decizia ta",
     "ap.reviews": "Pontaje cu risc ridicat — de verificat", "ap.signals": "Semnale",
     "ap.stillOpen": "încă deschis", "ap.method": "metodă", "ap.noLocation": "fără locație",

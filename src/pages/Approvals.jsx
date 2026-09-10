@@ -18,7 +18,7 @@ function DecideButtons({ onDecide, allowCompensate }) {
   }
   return (
     <div className="row" style={{ marginTop: 8 }}>
-      <button className="btn small" onClick={() => onDecide("approved", "")}>{t("common.approve")}</button>
+      <button className="btn approve small" onClick={() => onDecide("approved", "")}>{t("common.approve")}</button>
       {allowCompensate && (
         <button className="btn subtle small" onClick={() => onDecide("compensated", "")}>{t("ap.compensate")}</button>
       )}
@@ -49,9 +49,14 @@ export default function Approvals() {
     await api(`/flags/${id}/resolve`, { method: "POST", body: { note: "Reviewed" } });
     after(t("ap.flagResolved"));
   };
+  const decideMember = (id) => async (decision) => {
+    await api(`/employees/${id}/${decision === "approved" ? "approve" : "reject"}`, { method: "POST" });
+    after(t(`ap.decided.${decision}`));
+  };
 
   if (!data) return null;
-  const total = data.leaves.length + data.corrections.length + data.overtime.length +
+  const members = data.members || [];
+  const total = members.length + data.leaves.length + data.corrections.length + data.overtime.length +
     data.reviews.length + data.flags.length;
 
   const kindLabel = {
@@ -66,6 +71,25 @@ export default function Approvals() {
         <p>{total === 0 ? t("ap.clear") : total === 1 ? t("ap.waitingOne") : t("ap.waiting", { n: total })}</p>
       </div>
       {notice && <div className="ok-box">{notice}</div>}
+
+      {members.length > 0 && (
+        <div className="card">
+          <h2>{t("team.pendingMembers")}</h2>
+          <p className="small muted" style={{ marginTop: -4 }}>{t("team.pendingSub")}</p>
+          {members.map((m) => (
+            <div className="list-item spread" key={m.id}>
+              <div>
+                <strong>{m.first_name} {m.last_name}</strong>
+                <div className="small muted">{t("ap.askedToJoin")} · {fmtDateTime(m.created_at)}</div>
+              </div>
+              <div className="row">
+                <button className="btn approve small" onClick={() => decideMember(m.id)("approved")}>{t("common.approve")}</button>
+                <button className="btn danger small" onClick={() => decideMember(m.id)("rejected")}>{t("common.reject")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {data.reviews.length > 0 && (
         <div className="card">
