@@ -152,7 +152,7 @@ export default function Checkpoint() {
           <>
             <span className={`pill ${s}`}>{t(`status.${s}`)}</span>
             <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
-              {(s === "upcoming" || s === "late" || s === "no_shift") && (
+              {(s === "upcoming" || s === "late" || s === "no_shift" || s === "complete") && (
                 <button className="btn big" disabled={busy} onClick={() => actSession("clock-in")}>
                   {busy ? t("cp.recording") : t("cp.clockIn", { name: user.first_name })}
                 </button>
@@ -162,7 +162,7 @@ export default function Checkpoint() {
                   {busy ? t("cp.recording") : t("dash.clockOut")}
                 </button>
               )}
-              {(s === "complete" || s === "requires_review") && (
+              {s === "requires_review" && (
                 <p className="muted">{t("cp.already")}</p>
               )}
             </div>

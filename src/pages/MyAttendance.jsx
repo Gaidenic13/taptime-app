@@ -186,12 +186,12 @@ export default function MyAttendance() {
                   <td><strong>{fmtDate(d.date)}</strong></td>
                   <td>{d.shift ? `${d.shift.start_time}–${d.shift.end_time}` : "—"}</td>
                   <td>
-                    {d.attendance?.clock_in
-                      ? `${fmtTime(d.attendance.clock_in)}–${d.attendance.clock_out ? fmtTime(d.attendance.clock_out) : "…"}`
+                    {d.sessions?.length
+                      ? d.sessions.map((s) => `${fmtTime(s.clock_in)}–${s.clock_out ? fmtTime(s.clock_out) : "…"}`).join(" · ")
                       : "—"}
                   </td>
                   <td>{d.break_min ? fmtMin(d.break_min) : "—"}</td>
-                  <td>{d.attendance?.clock_out ? fmtMin(d.worked_min) : "—"}</td>
+                  <td>{d.worked_min ? fmtMin(d.worked_min) : "—"}</td>
                   <td>
                     <span className={`pill ${cls}`}>{text}</span>
                     {d.correction && (

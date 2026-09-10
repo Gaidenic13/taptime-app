@@ -48,10 +48,10 @@ after(async () => {
 const user = (id) => db.get("SELECT * FROM users WHERE id = ?", id);
 
 // ---------------------------------------------------------------- attendance
-test("clock in → break → clock out computes minutes and prevents bad sequences", async () => {
+test("check in → break → check out, then a SECOND session the same day", async () => {
   let s = await clockIn(await user(empA), { deviceKnown: true });
   assert.equal(s.status, "working");
-  await assert.rejects(clockIn(await user(empA), { deviceKnown: true }), /Already clocked in/);
+  await assert.rejects(clockIn(await user(empA), { deviceKnown: true }), /Already checked in/);
 
   s = await breakAction(await user(empA), "start");
   assert.equal(s.status, "break");
@@ -62,16 +62,27 @@ test("clock in → break → clock out computes minutes and prevents bad sequenc
 
   s = await clockOut(await user(empA));
   assert.equal(s.status, "complete");
-  await assert.rejects(clockOut(await user(empA)), /Already clocked out/);
+  await assert.rejects(clockOut(await user(empA)), /Not checked in/);
   const att = s.attendance;
   assert.equal(att.status, "completed");
   assert.ok(att.worked_minutes >= 0);
   assert.ok(att.break_minutes >= 0);
   await assert.rejects(breakAction(await user(empA), "start"), /Not currently working/);
+
+  // Sessions model: coming back the same day opens a NEW session.
+  s = await clockIn(await user(empA), { deviceKnown: true });
+  assert.equal(s.status, "working");
+  assert.equal(s.sessions.length, 2);
+  s = await clockOut(await user(empA));
+  assert.equal(s.sessions.length, 2);
+  assert.ok(s.sessions.every((x) => x.clock_out), "both sessions closed");
+  // Day total = sum of both sessions.
+  const total = s.sessions.reduce((a, x) => a + x.worked_minutes, 0);
+  assert.equal(s.worked_min, total);
 });
 
-test("clock-out before clock-in is rejected", async () => {
-  await assert.rejects(clockOut(await user(empA2)), /Not clocked in/);
+test("check-out without an open session is rejected", async () => {
+  await assert.rejects(clockOut(await user(empA2)), /Not checked in/);
 });
 
 test("no-shift + unknown-device clock-in is held for review and flagged", async () => {
@@ -89,7 +100,7 @@ test("require_shift_to_clock_in blocks unscheduled clock-ins when enabled", asyn
   await setSetting(orgA, "require_shift_to_clock_in", false);
 });
 
-test("tap toggle: in → double-tap guard → out → done", async () => {
+test("tap toggle: in → double-tap guard → out → in again (new session)", async () => {
   const empTap = await insert(`
     INSERT INTO users (organization_id, first_name, last_name, email, password_hash, role, job_role_id, location_id, pin)
     VALUES (?, 'Tap', 'User', 'tap@a.test', 'x:x', 'employee', ?, ?, '9876')
@@ -113,9 +124,10 @@ test("tap toggle: in → double-tap guard → out → done", async () => {
   assert.equal(r.did, "out");
   assert.ok(r.today.attendance.clock_out);
 
-  // Day recorded → further taps are no-ops.
+  // Scanning again after checking out starts a NEW session — no daily limit.
   r = await tapToggle(await user(empTap), { method: "NFC", locationId: locA });
-  assert.equal(r.did, "done");
+  assert.equal(r.did, "in");
+  assert.equal(r.today.sessions.length, 2);
 });
 
 // ---------------------------------------------------------------- scheduling

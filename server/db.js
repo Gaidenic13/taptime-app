@@ -132,8 +132,7 @@ CREATE TABLE IF NOT EXISTS attendance (
   risk_level TEXT NOT NULL DEFAULT 'low',
   risk_signals TEXT DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT '',
-  updated_at TEXT NOT NULL DEFAULT '',
-  UNIQUE(user_id, date)
+  updated_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS breaks (
@@ -278,6 +277,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_attendance_org_date ON attendance(organization_id, date);
+CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date);
+-- Sessions model: many in/out pairs per day, but at most ONE open session per person.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_one_open ON attendance(user_id) WHERE clock_out IS NULL;
 CREATE INDEX IF NOT EXISTS idx_shifts_org_date ON shifts(organization_id, date);
 CREATE INDEX IF NOT EXISTS idx_flags_open ON attendance_flags(organization_id, status);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at);

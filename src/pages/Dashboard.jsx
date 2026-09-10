@@ -80,10 +80,9 @@ export default function Dashboard() {
           {s === "break" && (
             <button className="btn" disabled={busy} onClick={() => act("break-end")}>{t("dash.endBreak")}</button>
           )}
-          {(s === "upcoming" || s === "late" || (s === "no_shift" && !att)) && (
+          {(s === "upcoming" || s === "late" || s === "complete" || (s === "no_shift" && !att)) && (
             <button className="btn" disabled={busy} onClick={() => act("clock-in")}>{t("dash.clockIn")}</button>
           )}
-          {s === "complete" && <div className="sub">{t("dash.complete", { dur: fmtMin(today.worked_min) })}</div>}
           {s === "requires_review" && <div className="sub">{t("dash.reviewNote")}</div>}
         </div>
       </div>
@@ -113,8 +112,14 @@ export default function Dashboard() {
           <table className="kv">
             <tbody>
               <tr><td className="muted">{t("common.scheduled")}</td><td>{shift ? `${shift.start_time} – ${shift.end_time}` : "—"}</td></tr>
-              <tr><td className="muted">{t("dash.clockIn")}</td><td>{fmtTime(att?.clock_in)}</td></tr>
-              <tr><td className="muted">{t("dash.clockOut")}</td><td>{fmtTime(att?.clock_out)}</td></tr>
+              <tr>
+                <td className="muted">{t("days.sessions")}</td>
+                <td>
+                  {today.sessions?.length
+                    ? today.sessions.map((x) => `${fmtTime(x.clock_in)}–${x.clock_out ? fmtTime(x.clock_out) : "…"}`).join(" · ")
+                    : "—"}
+                </td>
+              </tr>
               <tr><td className="muted">{t("common.breaks")}</td><td>{fmtMin(today.break_min)}</td></tr>
               <tr><td className="muted">{t("common.worked")}</td><td>{fmtMin(today.worked_min)}</td></tr>
             </tbody>

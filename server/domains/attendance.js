@@ -1,7 +1,9 @@
-// Core attendance engine (plan Phases 6, 8, 9, 12).
-// All clock events flow through here regardless of method (WEB/QR/NFC/KIOSK).
-// The server is the authority: timestamps, validation, risk and status are
-// computed here inside transactions — never trusted from the client.
+// Core attendance engine (plan Phases 6, 8, 9, 12) — SESSION MODEL.
+// A person can check in and out many times a day; each in/out pair is one
+// attendance session row. Daily hours = the sum of session durations. At most
+// one session per person may be open at a time (enforced by a partial unique
+// index). All clock events flow through here regardless of method
+// (WEB/QR/NFC/KIOSK); the server is the authority for every timestamp.
 import { db, insert } from "../db.js";
 import { audit } from "../audit.js";
 import { getSettings } from "../settings.js";
@@ -11,8 +13,10 @@ import {
   breakMinutes, workedMinutes,
 } from "../time.js";
 
-const attToday = (c, userId, date) =>
-  c.get("SELECT * FROM attendance WHERE user_id = ? AND date = ?", userId, date);
+const sessionsFor = (c, userId, date) =>
+  c.all("SELECT * FROM attendance WHERE user_id = ? AND date = ? ORDER BY clock_in", userId, date);
+const openSession = (c, userId) =>
+  c.get("SELECT * FROM attendance WHERE user_id = ? AND clock_out IS NULL", userId);
 const breaksFor = (c, attId) =>
   c.all("SELECT * FROM breaks WHERE attendance_id = ? ORDER BY start", attId);
 const openBreak = (c, attId) =>
@@ -33,26 +37,38 @@ export function haversineMeters(lat1, lon1, lat2, lon2) {
   return Math.round(2 * R * Math.asin(Math.sqrt(a)));
 }
 
+// Sum of net worked minutes across a day's sessions (open session counts up to now).
+async function dayMinutes(c, sessions) {
+  let worked = 0, breaks = 0;
+  for (const s of sessions) {
+    const br = await breaksFor(c, s.id);
+    breaks += breakMinutes(br);
+    worked += s.clock_out && s.worked_minutes != null ? s.worked_minutes : workedMinutes(s, br);
+  }
+  return { worked, breaks };
+}
+
 // ---------------------------------------------------------------- status
 export async function dayStatus(userId, date) {
-  const att = await attToday(db, userId, date);
+  const sessions = await sessionsFor(db, userId, date);
+  const open = sessions.find((s) => !s.clock_out) || null;
   const shift = await shiftFor(db, userId, date);
   const onLeave = await leaveOn(db, userId, date);
-  const breaks = att ? await breaksFor(db, att.id) : [];
-  const open = att ? await openBreak(db, att.id) : null;
+  const brOpen = open ? await openBreak(db, open.id) : null;
+  const { worked, breaks } = await dayMinutes(db, sessions);
   let settings = null;
-  if (att || shift) {
-    const orgId = att?.organization_id ||
+  if (sessions.length || shift) {
+    const orgId = sessions[0]?.organization_id ||
       (await db.get("SELECT organization_id FROM users WHERE id = ?", userId)).organization_id;
     settings = await getSettings(orgId);
   }
 
   let status = "no_shift";
   if (onLeave) status = "leave";
-  else if (att?.status === "requires_review") status = "requires_review";
-  else if (att?.clock_out) status = "complete";
-  else if (open) status = "break";
-  else if (att?.clock_in) status = "working";
+  else if (open?.status === "requires_review") status = "requires_review";
+  else if (brOpen) status = "break";
+  else if (open) status = "working";
+  else if (sessions.length) status = "complete"; // checked out — may check in again
   else if (shift) {
     const grace = settings?.late_grace_min ?? 5;
     const start = new Date(dateTimeIso(date, shift.start_time));
@@ -62,26 +78,32 @@ export async function dayStatus(userId, date) {
     else if (now > end) status = "absent";
     else status = "late";
   }
+  const closed = sessions.filter((s) => s.clock_out);
   return {
     status, shift, onLeave: !!onLeave,
-    attendance: att || null, breaks,
-    worked_min: att ? workedMinutes(att, breaks) : 0,
-    break_min: att ? breakMinutes(breaks) : 0,
+    sessions,
+    attendance: open || sessions[sessions.length - 1] || null,
+    first_in: sessions[0]?.clock_in || null,
+    last_out: open ? null : (closed[closed.length - 1]?.clock_out || null),
+    worked_min: worked,
+    break_min: breaks,
   };
 }
 
 // ---------------------------------------------------------------- risk (Phase 8)
-// Multi-signal evaluation. Returns { level, signals } — never a hard block by
-// itself; what happens to HIGH events is configurable (settings.high_risk_action).
-function assessClockIn({ shift, settings, method, viaCheckpoint, deviceKnown, geo, location }) {
+// Multi-signal evaluation. Shift-window signals only apply to the FIRST session
+// of the day — re-entering after lunch is normal, not "very late".
+function assessClockIn({ shift, settings, method, viaCheckpoint, deviceKnown, geo, location, firstSession }) {
   const signals = [];
 
-  if (!shift) signals.push("no_shift");
-  else {
-    const start = new Date(dateTimeIso(todayStr(), shift.start_time));
-    const deltaMin = Math.round((Date.now() - start.getTime()) / 60000);
-    if (deltaMin < -settings.clock_in_early_min) signals.push("too_early");
-    if (deltaMin > settings.clock_in_late_flag_min) signals.push("very_late");
+  if (firstSession) {
+    if (!shift) signals.push("no_shift");
+    else {
+      const start = new Date(dateTimeIso(todayStr(), shift.start_time));
+      const deltaMin = Math.round((Date.now() - start.getTime()) / 60000);
+      if (deltaMin < -settings.clock_in_early_min) signals.push("too_early");
+      if (deltaMin > settings.clock_in_late_flag_min) signals.push("very_late");
+    }
   }
 
   if (!deviceKnown && method !== "KIOSK") signals.push("unknown_device");
@@ -122,7 +144,7 @@ async function flag(orgId, { attendanceId = null, userId, kind, detail = "", ris
   return id;
 }
 
-// ---------------------------------------------------------------- clock in
+// ---------------------------------------------------------------- check in
 export async function clockIn(user, {
   method = "WEB", locationId = null, geo = null, viaCheckpoint = false, deviceKnown = true,
 } = {}) {
@@ -130,8 +152,9 @@ export async function clockIn(user, {
   const settings = await getSettings(orgId);
   const date = todayStr();
   const shift = await shiftFor(db, user.id, date);
+  const priorSessions = await sessionsFor(db, user.id, date);
 
-  if (settings.require_shift_to_clock_in && !shift) {
+  if (settings.require_shift_to_clock_in && !shift && priorSessions.length === 0) {
     throw new Error("You have no scheduled shift today — contact your manager");
   }
   if (await leaveOn(db, user.id, date)) {
@@ -142,15 +165,16 @@ export async function clockIn(user, {
   const location = locId ? await db.get("SELECT * FROM locations WHERE id = ?", locId) : null;
   const { level, signals } = assessClockIn({
     shift, settings, method, viaCheckpoint, deviceKnown, geo, location,
+    firstSession: priorSessions.length === 0,
   });
 
   const status = level === "high" && settings.high_risk_action === "review" ? "requires_review" : "working";
 
-  // Transaction + UNIQUE(user_id, date) make double clock-in impossible (Phase 22).
+  // Transaction + the partial unique index make a double check-in impossible (Phase 22).
   let attId;
   try {
     attId = await db.tx(async (c) => {
-      if (await attToday(c, user.id, date)) throw new Error("Already clocked in today");
+      if (await openSession(c, user.id)) throw new Error("Already checked in");
       const row = await c.get(`
         INSERT INTO attendance
           (organization_id, user_id, shift_id, date, clock_in, clock_in_method, location_id,
@@ -163,7 +187,7 @@ export async function clockIn(user, {
       return row.id;
     });
   } catch (e) {
-    if (/UNIQUE|duplicate key/i.test(String(e.message))) throw new Error("Already clocked in today");
+    if (/UNIQUE|duplicate key/i.test(String(e.message))) throw new Error("Already checked in");
     throw e;
   }
 
@@ -175,49 +199,58 @@ export async function clockIn(user, {
   }
   await audit({
     orgId, actorId: user.id, action: "clock_in", entityType: "attendance", entityId: attId,
-    next: { method, location_id: locId, risk: level, signals },
+    next: { method, location_id: locId, risk: level, signals, session: priorSessions.length + 1 },
   });
   return dayStatus(user.id, date);
 }
 
-// ---------------------------------------------------------------- clock out
+// ---------------------------------------------------------------- check out
 export async function clockOut(user, { method = "WEB", locationId = null } = {}) {
   const orgId = user.organization_id;
   const settings = await getSettings(orgId);
   const date = todayStr();
 
   const result = await db.tx(async (c) => {
-    const att = await attToday(c, user.id, date);
-    if (!att?.clock_in) throw new Error("Not clocked in");
-    if (att.clock_out) throw new Error("Already clocked out");
+    const att = await openSession(c, user.id);
+    if (!att) throw new Error("Not checked in");
     const now = nowIso();
     const open = await openBreak(c, att.id);
     if (open) await c.run("UPDATE breaks SET ended_at = ? WHERE id = ?", now, open.id);
 
     const breaks = await breaksFor(c, att.id);
     const brMin = breakMinutes(breaks, now);
-    const worked = Math.max(0, minutesBetween(att.clock_in, now) - brMin);
-    const shift = att.shift_id ? await c.get("SELECT * FROM shifts WHERE id = ?", att.shift_id) : null;
-    const scheduled = shift ? shiftMinutes(shift.start_time, shift.end_time) : null;
-    const overtime = scheduled != null ? Math.max(0, worked - scheduled) : 0;
+    const sessionWorked = Math.max(0, minutesBetween(att.clock_in, now) - brMin);
 
     const newStatus = att.status === "requires_review" ? "requires_review" : "completed";
     await c.run(`
       UPDATE attendance SET clock_out = ?, clock_out_method = ?, status = ?,
-        worked_minutes = ?, break_minutes = ?, overtime_minutes = ?, updated_at = ?
+        worked_minutes = ?, break_minutes = ?, updated_at = ?
       WHERE id = ?
-    `, now, method, newStatus, worked, brMin, overtime, now, att.id);
+    `, now, method, newStatus, sessionWorked, brMin, now, att.id);
 
+    // Overtime: compare the DAY total (all sessions) against the scheduled shift.
+    const sessions = await sessionsFor(c, user.id, att.date);
+    const { worked: dayTotal } = await dayMinutes(c, sessions);
+    const shift = att.shift_id ? await c.get("SELECT * FROM shifts WHERE id = ?", att.shift_id) : null;
+    const scheduled = shift ? shiftMinutes(shift.start_time, shift.end_time) : null;
+    const overtime = scheduled != null ? Math.max(0, dayTotal - scheduled) : 0;
     if (overtime >= settings.overtime_threshold_min) {
-      await c.run(`
-        INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)
-        VALUES (?, ?, ?, ?, 'pending', ?)
-      `, orgId, user.id, date, overtime, now);
+      const existing = await c.get(
+        "SELECT id, status FROM overtime WHERE user_id = ? AND date = ?", user.id, att.date
+      );
+      if (existing?.status === "pending") {
+        await c.run("UPDATE overtime SET minutes = ? WHERE id = ?", overtime, existing.id);
+      } else if (!existing) {
+        await c.run(`
+          INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)
+          VALUES (?, ?, ?, ?, 'pending', ?)
+        `, orgId, user.id, att.date, overtime, now);
+      }
     }
-    return { att, worked, brMin, overtime, outLocation: locationId };
+    return { att, sessionWorked, brMin, outLocation: locationId };
   });
 
-  // Impossible transition check: clock-out from another location too soon (Phase 8.6).
+  // Impossible transition check: check-out from another location too soon (Phase 8.6).
   if (result.outLocation && result.att.location_id &&
       result.outLocation !== result.att.location_id &&
       minutesBetween(result.att.clock_in, nowIso()) < 20) {
@@ -236,7 +269,7 @@ export async function clockOut(user, { method = "WEB", locationId = null } = {})
 
   await audit({
     orgId, actorId: user.id, action: "clock_out", entityType: "attendance", entityId: result.att.id,
-    next: { method, worked_minutes: result.worked, overtime_minutes: result.overtime },
+    next: { method, worked_minutes: result.sessionWorked },
   });
   return dayStatus(user.id, date);
 }
@@ -245,8 +278,8 @@ export async function clockOut(user, { method = "WEB", locationId = null } = {})
 export async function breakAction(user, action) {
   const date = todayStr();
   await db.tx(async (c) => {
-    const att = await attToday(c, user.id, date);
-    if (!att?.clock_in || att.clock_out) throw new Error("Not currently working");
+    const att = await openSession(c, user.id);
+    if (!att) throw new Error("Not currently working");
     const open = await openBreak(c, att.id);
     if (action === "start") {
       if (open) throw new Error("Break already running");
@@ -261,21 +294,19 @@ export async function breakAction(user, action) {
 }
 
 // ---------------------------------------------------------------- tap toggle
-// One-gesture attendance for checkpoints: the server decides whether a tap is
-// an "in" or an "out" from current state. A tap within 2 minutes of clocking
-// in is treated as an accidental double tap, not a clock-out.
+// One-gesture attendance: a scan checks you in if you're out, out if you're in.
+// A scan within 2 minutes of checking in is treated as an accidental double
+// tap. There is no daily limit — scan as many times as you come and go.
 export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true } = {}) {
-  const date = todayStr();
-  const att = await attToday(db, user.id, date);
-  if (!att) {
+  const open = await openSession(db, user.id);
+  if (!open) {
     return {
       did: "in",
       today: await clockIn(user, { method, locationId, geo, viaCheckpoint: true, deviceKnown }),
     };
   }
-  if (att.clock_out) return { did: "done", today: await dayStatus(user.id, date) };
-  if (minutesBetween(att.clock_in, nowIso()) < 2) {
-    return { did: "in_recent", today: await dayStatus(user.id, date) };
+  if (minutesBetween(open.clock_in, nowIso()) < 2) {
+    return { did: "in_recent", today: await dayStatus(user.id, todayStr()) };
   }
   return { did: "out", today: await clockOut(user, { method, locationId }) };
 }

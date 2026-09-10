@@ -28,9 +28,11 @@ export async function attendanceReport(orgId, month, { locationId = null, jobRol
     const scheduledPast = shifts.filter((x) => x.date < todayStr())
       .reduce((s, x) => s + shiftMinutes(x.start_time, x.end_time), 0);
     let worked = 0, brTotal = 0, late = 0;
+    // Sessions model: several rows per day — sum them all; keep the EARLIEST
+    // session per date for the late-arrival comparison.
     const attByDate = {};
     for (const a of atts) {
-      attByDate[a.date] = a;
+      if (!attByDate[a.date] || a.clock_in < attByDate[a.date].clock_in) attByDate[a.date] = a;
       if (a.clock_out) {
         worked += a.worked_minutes ?? workedMinutes(a, await breaksFor(a.id));
         brTotal += a.break_minutes ?? breakMinutes(await breaksFor(a.id));

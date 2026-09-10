@@ -205,6 +205,19 @@ for (const s of await db.all("SELECT * FROM shifts WHERE date < ?", today)) {
   `, orgId, s.user_id, s.id, s.date, inIso, outIso, method, method,
     s.location_id, worked, brDur, ot, inIso, outIso);
   await db.run("INSERT INTO breaks (attendance_id, start, ended_at) VALUES (?, ?, ?)", attId, brStart, brEnd);
+  // Sessions model: some people come back for an evening session (~15% of
+  // days whose shift ends by 16:00) — so the Days view shows real in/out pairs.
+  if (r > 0.85 && s.end_time <= "16:00") {
+    const in2 = shiftTime(s.date, "17:30", jitter(15));
+    const out2 = shiftTime(s.date, "19:00", jitter(20));
+    const w2 = Math.max(0, minutesBetween(in2, out2));
+    await db.run(`
+      INSERT INTO attendance (organization_id, user_id, shift_id, date, clock_in, clock_out,
+                              clock_in_method, clock_out_method, location_id, status,
+                              worked_minutes, break_minutes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'NFC', 'NFC', ?, 'completed', ?, 0, ?, ?)
+    `, orgId, s.user_id, s.id, s.date, in2, out2, s.location_id, w2, in2, out2);
+  }
   if (overtime > 30) {
     await db.run(`
       INSERT INTO overtime (organization_id, user_id, date, minutes, status, created_at)

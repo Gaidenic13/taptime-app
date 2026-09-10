@@ -140,27 +140,37 @@ export async function decide(reviewer, type, id, decision, note = "") {
 // Corrections never silently overwrite history: the previous record is stored
 // in the audit trail and the row is marked MANUAL_APPROVED (plan Phase 10).
 async function applyCorrection(c, reviewer, corr) {
-  let att = await c.get("SELECT * FROM attendance WHERE user_id = ? AND date = ?", corr.user_id, corr.date);
+  // Sessions model: corrections apply to the first session of that day
+  // (or create one when the day has no record at all).
+  let att = await c.get(
+    "SELECT * FROM attendance WHERE user_id = ? AND date = ? ORDER BY clock_in LIMIT 1",
+    corr.user_id, corr.date
+  );
   const previous = att ? { ...att } : null;
   if (!att) {
     const user = await c.get("SELECT * FROM users WHERE id = ?", corr.user_id);
-    await c.run(`
-      INSERT INTO attendance (organization_id, user_id, date, clock_in_method, location_id, status, created_at, updated_at)
-      VALUES (?, ?, ?, 'MANUAL_APPROVED', ?, 'corrected', ?, ?)
-    `, corr.organization_id, corr.user_id, corr.date, user.location_id, nowIso(), nowIso());
-    att = await c.get("SELECT * FROM attendance WHERE user_id = ? AND date = ?", corr.user_id, corr.date);
+    // A created historical record must never be an OPEN session (that would
+    // block future check-ins), so a missing bound falls back to the other one.
+    const inIso = dateTimeIso(corr.date, corr.requested_in || corr.requested_out);
+    const outIso = dateTimeIso(corr.date, corr.requested_out || corr.requested_in);
+    att = await c.get(`
+      INSERT INTO attendance (organization_id, user_id, date, clock_in, clock_out,
+                              clock_in_method, clock_out_method, location_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'MANUAL_APPROVED', 'MANUAL_APPROVED', ?, 'corrected', ?, ?) RETURNING *
+    `, corr.organization_id, corr.user_id, corr.date, inIso, outIso, user.location_id, nowIso(), nowIso());
+  } else {
+    const sets = ["status = 'corrected'", "updated_at = ?"];
+    const vals = [nowIso()];
+    if (corr.requested_in) {
+      sets.push("clock_in = ?", "clock_in_method = 'MANUAL_APPROVED'");
+      vals.push(dateTimeIso(corr.date, corr.requested_in));
+    }
+    if (corr.requested_out) {
+      sets.push("clock_out = ?", "clock_out_method = 'MANUAL_APPROVED'");
+      vals.push(dateTimeIso(corr.date, corr.requested_out));
+    }
+    await c.run(`UPDATE attendance SET ${sets.join(", ")} WHERE id = ?`, ...vals, att.id);
   }
-  const sets = ["status = 'corrected'", "updated_at = ?"];
-  const vals = [nowIso()];
-  if (corr.requested_in) {
-    sets.push("clock_in = ?", "clock_in_method = 'MANUAL_APPROVED'");
-    vals.push(dateTimeIso(corr.date, corr.requested_in));
-  }
-  if (corr.requested_out) {
-    sets.push("clock_out = ?", "clock_out_method = 'MANUAL_APPROVED'");
-    vals.push(dateTimeIso(corr.date, corr.requested_out));
-  }
-  await c.run(`UPDATE attendance SET ${sets.join(", ")} WHERE id = ?`, ...vals, att.id);
 
   await audit({
     orgId: corr.organization_id, actorId: reviewer.id, action: "attendance_corrected",

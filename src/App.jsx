@@ -11,6 +11,7 @@ import MyAttendance from "./pages/MyAttendance.jsx";
 import Schedule from "./pages/Schedule.jsx";
 import Leave from "./pages/Leave.jsx";
 import TeamToday from "./pages/TeamToday.jsx";
+import Days from "./pages/Days.jsx";
 import Approvals from "./pages/Approvals.jsx";
 import Employees from "./pages/Employees.jsx";
 import Reports from "./pages/Reports.jsx";
@@ -30,6 +31,7 @@ const EMPLOYEE_NAV = [
 const MANAGER_GROUPS = [
   { key: "nav.g.clinic", items: [
     { to: "/team", key: "nav.team" },
+    { to: "/days", key: "nav.days" },
     { to: "/approvals", key: "nav.approvals" },
     { to: "/reports", key: "nav.reports" },
     { to: "/employees", key: "nav.employees" },
@@ -46,7 +48,7 @@ const MANAGER_GROUPS = [
 ];
 
 const MOBILE_EMPLOYEE = ["/", "/attendance", "/schedule", "/leave"];
-const MOBILE_MANAGER = ["/team", "/approvals", "/me", "/reports"];
+const MOBILE_MANAGER = ["/team", "/days", "/approvals", "/me"];
 
 function Shell({ children }) {
   const { user, logout, pendingCount } = useAuth();
@@ -182,6 +184,7 @@ function AppInner() {
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/leave" element={<Leave />} />
           {isManager && <Route path="/team" element={<TeamToday />} />}
+          {isManager && <Route path="/days" element={<Days />} />}
           {isManager && <Route path="/approvals" element={<Approvals />} />}
           {isManager && <Route path="/employees" element={<Employees />} />}
           {isManager && <Route path="/reports" element={<Reports />} />}

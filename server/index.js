@@ -204,11 +204,13 @@ app.get("/api/attendance/history", requireAuth, handle(async (req) => {
   for (const s of shifts) byDate[s.date] = { date: s.date, shift: s };
   for (const a of atts) {
     byDate[a.date] = byDate[a.date] || { date: a.date };
+    const d = byDate[a.date];
     const breaks = await db.all("SELECT * FROM breaks WHERE attendance_id = ?", a.id);
-    byDate[a.date].attendance = a;
-    byDate[a.date].breaks = breaks;
-    byDate[a.date].worked_min = a.worked_minutes ?? workedMinutes(a, breaks);
-    byDate[a.date].break_min = a.break_minutes ?? breakMinutes(breaks);
+    d.sessions = d.sessions || [];
+    d.sessions.push(a);
+    d.attendance = a; // latest session (kept for status pills)
+    d.worked_min = (d.worked_min || 0) + (a.clock_out ? (a.worked_minutes ?? workedMinutes(a, breaks)) : workedMinutes(a, breaks));
+    d.break_min = (d.break_min || 0) + (a.break_minutes ?? breakMinutes(breaks));
   }
   for (const c of corrections) if (byDate[c.date]) byDate[c.date].correction = c;
   for (const l of leaves) {
@@ -282,11 +284,15 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
       id: u.id, name: `${u.first_name} ${u.last_name}`, job_title: u.job_title || "—",
       location: u.location_name, status: d.status,
       shift: d.shift ? `${d.shift.start_time}–${d.shift.end_time}` : null,
-      clock_in: d.attendance?.clock_in || null,
-      clock_out: d.attendance?.clock_out || null,
+      clock_in: d.first_in,
+      clock_out: d.last_out,
       method: d.attendance?.clock_in_method || null,
       risk: d.attendance?.risk_level || null,
       worked_min: d.worked_min,
+      sessions: d.sessions.map((s) => ({
+        in: s.clock_in, out: s.clock_out, method: s.clock_in_method,
+        minutes: s.clock_out ? s.worked_minutes : null,
+      })),
     });
   }
   const counts = {};
