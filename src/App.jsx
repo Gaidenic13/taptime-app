@@ -15,6 +15,7 @@ import Schedule from "./pages/Schedule.jsx";
 import Leave from "./pages/Leave.jsx";
 import TeamToday from "./pages/TeamToday.jsx";
 import Days from "./pages/Days.jsx";
+import More from "./pages/More.jsx";
 import Approvals from "./pages/Approvals.jsx";
 import Employees from "./pages/Employees.jsx";
 import Reports from "./pages/Reports.jsx";
@@ -52,7 +53,7 @@ const MANAGER_GROUPS = [
 ];
 
 const MOBILE_EMPLOYEE = ["/", "/attendance", "/schedule", "/leave"];
-const MOBILE_MANAGER = ["/team", "/days", "/approvals", "/me"];
+const MOBILE_MANAGER = ["/team", "/days", "/approvals", "/more"];
 
 function Shell({ children }) {
   const { user, logout, pendingCount } = useAuth();
@@ -62,7 +63,7 @@ function Shell({ children }) {
   const groups = isManager
     ? MANAGER_GROUPS.filter((g) => !g.admin || isAdmin)
     : [{ items: EMPLOYEE_NAV }];
-  const flat = groups.flatMap((g) => g.items);
+  const flat = [...groups.flatMap((g) => g.items), { to: "/more", key: "nav.more" }, { to: "/me", key: "nav.me" }];
   const mobileSet = isManager ? MOBILE_MANAGER : MOBILE_EMPLOYEE;
   const mobileItems = mobileSet.map((to) => flat.find((n) => n.to === to)).filter(Boolean);
 
@@ -206,6 +207,7 @@ function AppInner() {
           <Route path="/leave" element={<Leave />} />
           {isManager && <Route path="/team" element={<TeamToday />} />}
           {isManager && <Route path="/days" element={<Days />} />}
+          {isManager && <Route path="/more" element={<More />} />}
           {isManager && <Route path="/approvals" element={<Approvals />} />}
           {isManager && <Route path="/employees" element={<Employees />} />}
           {isManager && <Route path="/reports" element={<Reports />} />}
