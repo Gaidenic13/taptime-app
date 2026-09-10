@@ -153,6 +153,7 @@ app.get("/api/me", requireAuth, handle(async (req) => {
   return {
     user,
     token: req.token, // lets a cookie-recognized phone restore its storage token
+    goal_min: Math.round(Number((await getSettings(req.orgId)).daily_goal_hours || 0) * 60),
     today: await dayStatus(req.user.id, todayStr()),
     unread_notifications: await unreadCount(req.user.id),
   };

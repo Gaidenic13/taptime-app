@@ -289,6 +289,20 @@ td strong { font-weight: 600; }
 .clock-hero .sub { color: var(--muted); font-weight: 500; font-size: 14px; }
 .clock-actions { display: flex; gap: 10px; margin-top: 24px; }
 .clock-actions .btn { flex: 1; padding: 16px; font-size: 15.5px; }
+/* Same hero on the worker's scan page — the card already provides the surface. */
+.checkpoint-card .clock-hero { background: transparent; padding: 4px 0 0; margin-bottom: 0; }
+.checkpoint-card .clock-hero .time { font-size: 58px; margin: 10px 0 2px; }
+.checkpoint-card .clock-actions { margin-top: 18px; }
+.login-card .clock-hero { background: transparent; padding: 8px 0 0; margin-bottom: 0; }
+.login-card .clock-hero .time { font-size: 54px; margin: 8px 0 2px; }
+
+/* daily goal progress */
+.goal { margin-top: 16px; text-align: left; }
+.goal-row { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.goal-bar { height: 10px; border-radius: 999px; background: rgba(33, 29, 26, 0.09); overflow: hidden; }
+.goal-fill { height: 100%; border-radius: 999px; background: var(--ink); transition: width 0.6s ease; }
+.goal.done .goal-fill { background: var(--green); }
+.goal.done .goal-row { color: var(--green); }
 
 /* summary table (borderless, label/value) */
 .kv { width: 100%; }

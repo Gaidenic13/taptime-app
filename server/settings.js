@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = {
   high_risk_action: "review",  // accept | flag | review  (what to do with HIGH risk events)
   break_max_min: 90,           // breaks longer than this get flagged
   onboarded: false,            // out-of-the-box wizard completed
+  daily_goal_hours: 8,         // the progress bar members fill up each day
 };
 
 export async function getSettings(orgId) {

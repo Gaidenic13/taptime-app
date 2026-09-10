@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { api, fmtTime, fmtMin, fmtDate } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
+import Clock from "../components/Clock.jsx";
+import DayProgress from "../components/DayProgress.jsx";
 
 // The member's personal view: today's in/out pairs, the last 7 days, and the
 // month total. No menus — they reach this from the scan page or the app root.
@@ -18,10 +20,11 @@ export default function MemberHome() {
   const { user, logout } = useAuth();
   const { t } = useI18n();
   const [today, setToday] = useState(null);
+  const [goalMin, setGoalMin] = useState(480);
   const [history, setHistory] = useState(null);
 
   useEffect(() => {
-    api("/me").then((d) => setToday(d.today)).catch(() => {});
+    api("/me").then((d) => { setToday(d.today); if (d.goal_min) setGoalMin(d.goal_min); }).catch(() => {});
     api(`/attendance/history?month=${monthStr()}`).then(setHistory).catch(() => {});
   }, []);
 
@@ -38,7 +41,16 @@ export default function MemberHome() {
         <h2 style={{ marginTop: 6 }}>{t("dash.hi", { name: user.first_name })}</h2>
         {user.employment_status === "pending" && <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>}
         {user.employment_status === "rejected" && <div className="error-box">{t("cp.rejected")}</div>}
-        {today && user.employment_status === "active" && <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>}
+        {today && user.employment_status === "active" && (() => {
+          const open = today.status === "working" || today.status === "break";
+          return (
+            <div className="clock-hero">
+              <span className={`pill ${open ? today.status : "no_shift"}`}>{t(open ? `status.${today.status}` : "cp.stopped")}</span>
+              <Clock />
+              <DayProgress sessions={today.sessions || []} goalMin={goalMin} />
+            </div>
+          );
+        })()}
 
         {today?.sessions?.length > 0 && (
           <div className="history" style={{ marginTop: 14 }}>

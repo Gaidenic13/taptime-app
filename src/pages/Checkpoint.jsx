@@ -3,6 +3,8 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, setToken, getGeo, fmtTime, fmtMin } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
+import Clock from "../components/Clock.jsx";
+import DayProgress from "../components/DayProgress.jsx";
 
 // The scan page — the only thing employees ever touch.
 //  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
@@ -164,6 +166,7 @@ export default function Checkpoint() {
   const [challenge, setChallenge] = useState(null);
   const [checkpoint, setCheckpoint] = useState(null);
   const [today, setToday] = useState(null);
+  const [goalMin, setGoalMin] = useState(480);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null); // { name, did, time, worked, review }
   const [busy, setBusy] = useState(false);
@@ -203,7 +206,7 @@ export default function Checkpoint() {
 
   useEffect(() => { fetchChallenge(); }, [code]);
   useEffect(() => {
-    if (user) api("/me").then((d) => setToday(d.today)).catch(() => {});
+    if (user) api("/me").then((d) => { setToday(d.today); if (d.goal_min) setGoalMin(d.goal_min); }).catch(() => {});
   }, [user]);
 
   // A member session on this phone without a reload: keeps FRESH_SCAN true,
@@ -363,6 +366,10 @@ export default function Checkpoint() {
                 {result.worked > 0 && <div>{t("cp.workedToday", { dur: fmtMin(result.worked) })}</div>}
               </div>
             )}
+            <div className="clock-hero">
+              <Clock />
+              <DayProgress sessions={result.sessions} goalMin={goalMin} />
+            </div>
             <DayHistory sessions={result.sessions} worked={result.worked} />
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
             {/* Never a Clock out button here: this page's scan was just used. */}
@@ -393,18 +400,30 @@ export default function Checkpoint() {
         {/* -------- trusted phone at its own clinic: one explicit button -------- */}
         {!result && isEmployee && checkpoint && today && !wrongClinic && trusted && (() => {
           const open = today.status === "working" || today.status === "break";
+          const att = today.attendance;
           return (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
-              <span className={`pill ${open ? today.status : "no_shift"}`}>{t(open ? `status.${today.status}` : "cp.stopped")}</span>
+              <div className="clock-hero">
+                <span className={`pill ${open ? today.status : "no_shift"}`}>{t(open ? `status.${today.status}` : "cp.stopped")}</span>
+                <Clock />
+                <div className="sub">
+                  {att?.clock_in
+                    ? `${t("dash.in", { time: fmtTime(att.clock_in) })}${att.clock_out ? ` · ${t("dash.out", { time: fmtTime(att.clock_out) })}` : ""} · ${t("dash.workedFor", { dur: fmtMin(today.worked_min) })}`
+                    : t("cp.nothingYet")}
+                </div>
+                <DayProgress sessions={today.sessions || []} goalMin={goalMin} />
+                {FRESH_SCAN ? (
+                  <div className="clock-actions">
+                    <button className="btn" disabled={busy} onClick={() => tap(open ? "out" : "in")}>
+                      {busy ? t("cp.recording") : t(open ? "dash.clockOut" : "dash.clockIn")}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="small muted" style={{ marginTop: 16 }}>{t("cp.staleScan")}</p>
+                )}
+              </div>
               <DayHistory sessions={today.sessions} worked={today.worked_min} />
-              {FRESH_SCAN ? (
-                <button className="btn big" style={{ marginTop: 14 }} disabled={busy} onClick={() => tap(open ? "out" : "in")}>
-                  {busy ? t("cp.recording") : t(open ? "dash.clockOut" : "dash.clockIn")}
-                </button>
-              ) : (
-                <p className="small muted" style={{ marginTop: 14 }}>{t("cp.staleScan")}</p>
-              )}
             </>
           );
         })()}

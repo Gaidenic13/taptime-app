@@ -36,6 +36,7 @@ function Rules() {
       <p className="small muted">{t("set.rulesSub")}</p>
       {notice && <div className="ok-box">{notice}</div>}
       <div className="grid2" style={{ marginTop: 8 }}>
+        {num("daily_goal_hours", "set.dailyGoal")}
         {num("clock_in_early_min", "set.earlyIn")}
         {num("late_grace_min", "set.grace")}
         {num("clock_in_late_flag_min", "set.lateFlag")}
