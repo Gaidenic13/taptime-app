@@ -158,6 +158,10 @@ export async function clockIn(user, {
   const shift = await shiftFor(db, user.id, date);
   const priorSessions = await sessionsFor(db, user.id, date);
 
+  // Self-created accounts count only once an admin has approved them.
+  if (user.employment_status === "pending") throw new Error("Your account is waiting for the clinic admin's approval");
+  if (user.employment_status === "rejected") throw new Error("Your account was not approved — talk to the clinic admin");
+
   if (settings.require_shift_to_clock_in && !shift && priorSessions.length === 0) {
     throw new Error("You have no scheduled shift today — contact your manager");
   }

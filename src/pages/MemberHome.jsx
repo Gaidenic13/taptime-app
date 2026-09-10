@@ -36,7 +36,9 @@ export default function MemberHome() {
       <div className="card login-card" style={{ textAlign: "left" }}>
         <div className="brand" style={{ justifyContent: "flex-start" }}><span className="brand-mark">T</span>TapTime</div>
         <h2 style={{ marginTop: 6 }}>{t("dash.hi", { name: user.first_name })}</h2>
-        {today && <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>}
+        {user.employment_status === "pending" && <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>}
+        {user.employment_status === "rejected" && <div className="error-box">{t("cp.rejected")}</div>}
+        {today && user.employment_status === "active" && <span className={`pill ${today.status}`}>{t(`status.${today.status}`)}</span>}
 
         {today?.sessions?.length > 0 && (
           <div className="history" style={{ marginTop: 14 }}>

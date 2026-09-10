@@ -144,6 +144,71 @@ export function makeClaimCode() {
   return `${s.slice(0, 4)}-${s.slice(4)}`;
 }
 
+// ---------------------------------------------------------------- self-serve join
+// Someone scans the clinic's tag and isn't a member yet: they create their own
+// account by name. It stays PENDING (scans refused) until an admin approves it
+// from the dashboard. Idempotent per name+clinic so double-taps don't pile up.
+export async function joinClinic({ tag_code, first_name, last_name, pin: chosen }) {
+  const cp = await db.get(
+    "SELECT * FROM attendance_checkpoints WHERE code = ? AND status = 'active'", String(tag_code || "").trim()
+  );
+  if (!cp) throw new Error("This tag is not recognized");
+  const first = String(first_name || "").trim(), last = String(last_name || "").trim();
+  if (!first) throw new Error("First name is required");
+
+  const existing = await db.get(`
+    SELECT * FROM users WHERE organization_id = ? AND lower(first_name) = lower(?) AND lower(last_name) = lower(?)
+      AND employment_status = 'pending' AND active = 1
+  `, cp.organization_id, first, last);
+  if (existing) return { user: existing, created: false };
+
+  // The worker picks their own personal code (their "password" for linking
+  // phones); it must be unique within the clinic. Fallback: generated.
+  let pin = null;
+  if (chosen != null && String(chosen) !== "") {
+    const c = String(chosen).trim();
+    if (!/^\d{4}$/.test(c)) throw new Error("Your personal code must be exactly 4 digits");
+    if (await db.get("SELECT id FROM users WHERE organization_id = ? AND pin = ?", cp.organization_id, c)) {
+      throw new Error("That code is already used in this clinic — pick another one");
+    }
+    pin = c;
+  }
+  for (let tries = 0; !pin && tries < 50; tries++) {
+    const candidate = String(1000 + Math.floor(Math.random() * 9000));
+    if (!(await db.get("SELECT id FROM users WHERE organization_id = ? AND pin = ?", cp.organization_id, candidate))) {
+      pin = candidate;
+    }
+  }
+  const id = await insert(`
+    INSERT INTO users (organization_id, first_name, last_name, email, pin, role, location_id, employment_status)
+    VALUES (?, ?, ?, NULL, ?, 'employee', ?, 'pending')
+  `, cp.organization_id, first, last, pin, cp.location_id);
+  await audit({
+    orgId: cp.organization_id, actorId: id, action: "member_join_request",
+    entityType: "user", entityId: id, next: { first_name: first, last_name: last },
+  });
+  const { notifyManagers } = await import("./notifications.js");
+  await notifyManagers(cp.organization_id, "join_request",
+    `${first} ${last} asked to join`, "Approve them from Team Today", "/team");
+  return { user: await db.get("SELECT * FROM users WHERE id = ?", id), created: true };
+}
+
+// Admin decision on a self-created account.
+export async function setMemberStatus(actor, userId, status) {
+  if (!["active", "rejected"].includes(status)) throw new Error("Invalid status");
+  const u = await db.get("SELECT * FROM users WHERE id = ?", userId);
+  if (!u || u.organization_id !== actor.organization_id) throw new Error("Member not found");
+  await db.run(
+    "UPDATE users SET employment_status = ?, active = ?, manager_id = COALESCE(manager_id, ?) WHERE id = ?",
+    status, status === "active" ? 1 : 0, actor.id, u.id
+  );
+  await audit({
+    orgId: actor.organization_id, actorId: actor.id, action: `member_${status === "active" ? "approved" : "rejected"}`,
+    entityType: "user", entityId: u.id, previous: { employment_status: u.employment_status }, next: { employment_status: status },
+  });
+  return { ok: true };
+}
+
 // Quick-add a scan-only member: just a name — no email, no password. A unique
 // 4-digit PIN is generated (their whole login is tag + PIN).
 export async function quickAddMember(actor, { first_name, last_name }) {

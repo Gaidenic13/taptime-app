@@ -54,6 +54,26 @@ export default function TeamToday() {
         <div className="stat"><div className="n">{notYet}</div><div className="l">{t("team.notYet")}</div></div>
       </div>
 
+      {data.pending?.length > 0 && (
+        <div className="card tinted">
+          <h2>{t("team.pendingMembers")}</h2>
+          <p className="small muted">{t("team.pendingSub")}</p>
+          {data.pending.map((p) => (
+            <div className="person-row" key={p.id}>
+              <div className="person-main"><strong>{p.name}</strong></div>
+              <div className="row" style={{ gap: 6 }}>
+                <button className="btn small" onClick={async () => { await api(`/employees/${p.id}/approve`, { method: "POST" }); load(locId); }}>
+                  {t("common.approve")}
+                </button>
+                <button className="btn ghost small" onClick={async () => { await api(`/employees/${p.id}/reject`, { method: "POST" }); load(locId); }}>
+                  {t("common.reject")}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card">
         <h2>{t("team.presence")}</h2>
         {roster.length === 0 && <div className="empty">—</div>}

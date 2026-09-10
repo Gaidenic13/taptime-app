@@ -229,7 +229,10 @@ export default function Employees() {
         {employees.map((e) => (
           <div className="person-row" key={e.id} style={e.active ? {} : { opacity: 0.45 }}>
             <div className="person-main">
-              <strong>{e.first_name} {e.last_name}</strong>
+              <strong>
+                {e.first_name} {e.last_name}
+                {e.employment_status === "pending" && <span className="pill pending" style={{ marginLeft: 8 }}>{t("status.pending")}</span>}
+              </strong>
               <div className="small muted">
                 {[
                   e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : null),

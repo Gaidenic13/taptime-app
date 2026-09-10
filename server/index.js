@@ -19,7 +19,10 @@ import {
   checkpointByCode, createChallenge, consumeChallenge, createCheckpoint, createKiosk, resetKiosk,
 } from "./domains/checkpoints.js";
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
-import { createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember, makeClaimCode } from "./domains/org.js";
+import {
+  createOrganization, claimTag, attachTag, attachTagAsAdmin, quickAddMember, makeClaimCode,
+  joinClinic, setMemberStatus,
+} from "./domains/org.js";
 import crypto from "crypto";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
@@ -233,7 +236,17 @@ app.post("/api/checkpoint/pin", handle(async (req, res) => {
   );
   if (!user) {
     await recordPinAttempt(source, false);
-    const e = new Error("PIN not recognized"); e.status = 401; throw e;
+    // A declined self-serve request keeps its PIN, so the person gets a clear
+    // answer instead of an endless "wrong code".
+    const declined = await db.get(
+      "SELECT id FROM users WHERE pin = ? AND pin != '' AND employment_status = 'rejected' AND organization_id = ?",
+      String(pin || ""), ch.organization_id
+    );
+    const e = new Error(declined
+      ? "Your request was not approved — talk to the clinic admin."
+      : "PIN not recognized");
+    e.status = declined ? 403 : 401;
+    throw e;
   }
   await recordPinAttempt(source, true);
 
@@ -255,6 +268,27 @@ app.post("/api/checkpoint/pin", handle(async (req, res) => {
   setSessionCookie(res, token);
   return { user: { first_name: user.first_name }, token, ...result };
 }));
+
+// Self-serve join from the scan page: create your own (pending) account by
+// name; the phone is linked right away, scans count once an admin approves.
+app.post("/api/checkpoint/join", handle(async (req, res) => {
+  const { tag_code, first_name, last_name, pin } = req.body || {};
+  const source = req.headers["x-device-token"] || req.ip || "unknown";
+  await assertPinAllowed(source); // reuse the per-device rate limit
+  const { user } = await joinClinic({ tag_code, first_name, last_name, pin });
+  await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
+  const token = await createSession(user.id);
+  setSessionCookie(res, token);
+  return { token, user: { first_name: user.first_name, employment_status: user.employment_status } };
+}));
+
+// Admin decisions on self-created accounts.
+app.post("/api/employees/:id/approve", requireAuth, requireManager, handle(async (req) =>
+  setMemberStatus(req.user, Number(req.params.id), "active")
+));
+app.post("/api/employees/:id/reject", requireAuth, requireManager, handle(async (req) =>
+  setMemberStatus(req.user, Number(req.params.id), "rejected")
+));
 
 // Auto-scan for activated phones: an employee session + a fresh challenge is
 // all it takes — the server decides in vs out and records the device.
@@ -393,13 +427,17 @@ app.post("/api/leave", requireAuth, handle(async (req) => requestLeave(req.user,
 app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
   const date = req.query.date || todayStr();
   const locationId = Number(req.query.location_id) || null;
-  const users = await db.all(`
+  const allUsers = await db.all(`
     SELECT u.*, jr.name AS job_title, l.name AS location_name FROM users u
     LEFT JOIN job_roles jr ON jr.id = u.job_role_id
     LEFT JOIN locations l ON l.id = u.location_id
     WHERE u.organization_id = ? AND u.active = 1 ${locationId ? "AND u.location_id = ?" : ""}
     ORDER BY jr.name, u.last_name
   `, ...(locationId ? [req.orgId, locationId] : [req.orgId]));
+  // Self-created accounts awaiting approval are listed separately, not on the board.
+  const pendingMembers = allUsers.filter((u) => u.employment_status === "pending")
+    .map((u) => ({ id: u.id, name: `${u.first_name} ${u.last_name}` }));
+  const users = allUsers.filter((u) => u.employment_status !== "pending");
   // Entrance names shown per session, but only when the clinic has several.
   const cps = await db.all(
     "SELECT id, name FROM attendance_checkpoints WHERE organization_id = ?", req.orgId
@@ -440,7 +478,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
   const staffing = await coverageFor(req.orgId, date, { locationId });
   const pending = await pendingApprovals(req.orgId);
   return {
-    date, counts, roster, coverage, staffing,
+    date, counts, roster, coverage, staffing, pending: pendingMembers,
     pending_actions: {
       leaves: pending.leaves.length,
       corrections: pending.corrections.length,

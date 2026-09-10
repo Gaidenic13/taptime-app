@@ -161,7 +161,11 @@ export default function Checkpoint() {
   const [busy, setBusy] = useState(false);
   const [pin, setPin] = useState("");
   const [unclaimed, setUnclaimed] = useState(false);
+  const [joining, setJoining] = useState(false); // "New here? Create your account"
+  const [join, setJoin] = useState({ first_name: "", last_name: "", pin: "" });
+  const [joined, setJoined] = useState(null); // first name after a join request
   const autoFired = useRef(false);
+  const memberStatus = user?.employment_status || "active";
 
   const isEmployee = user && user.role === "employee";
   const isStaffAdmin = user && user.role !== "employee";
@@ -234,10 +238,26 @@ export default function Checkpoint() {
     }
   };
 
+  // Self-serve account: name + own personal code → pending until approved.
+  const submitJoin = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try {
+      const d = await api("/checkpoint/join", { method: "POST", body: { ...join, tag_code: code } });
+      if (d.token) setToken(d.token); // phone linked right away
+      setJoined(d.user.first_name);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Activated phone at ITS OWN clinic: checking IN is automatic; once checked
   // in, the page shows history and waits for the explicit Clock out tap.
   useEffect(() => {
     if (!isEmployee || !challenge || !today || autoFired.current || result || wrongClinic) return;
+    if (memberStatus !== "active") return; // pending/rejected accounts don't scan
     const open = today.status === "working" || today.status === "break";
     if (open) return;
     autoFired.current = true;
@@ -256,7 +276,7 @@ export default function Checkpoint() {
       if (d.token) setToken(d.token); // link this phone
       showResult(d, { activated: true });
     } catch (e) {
-      setError(e.message);
+      setError(e.status === 403 ? t("cp.rejected") : e.message);
       if (e.status === 410) fetchChallenge();
     } finally {
       setPin("");
@@ -343,8 +363,18 @@ export default function Checkpoint() {
           </>
         )}
 
+        {/* -------- just requested an account -------- */}
+        {joined && <div className="ok-box">{t("cp.pending", { name: joined })}</div>}
+
+        {/* -------- linked phone, account not (yet) approved -------- */}
+        {!result && !joined && isEmployee && checkpoint && !wrongClinic && memberStatus !== "active" && (
+          memberStatus === "pending"
+            ? <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>
+            : <div className="error-box">{t("cp.rejected")}</div>
+        )}
+
         {/* -------- activated employee phone at its own clinic -------- */}
-        {!result && isEmployee && checkpoint && today && !wrongClinic && (
+        {!result && !joined && isEmployee && checkpoint && today && !wrongClinic && memberStatus === "active" && (
           (today.status === "working" || today.status === "break") ? (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
@@ -377,8 +407,8 @@ export default function Checkpoint() {
           </>
         )}
 
-        {/* -------- no session yet: one-time activation -------- */}
-        {!result && !user && checkpoint && (
+        {/* -------- no session yet: enter your code, or create your account -------- */}
+        {!result && !joined && !user && checkpoint && !joining && (
           <>
             <p className="muted" style={{ marginBottom: 2 }}>{t("cp.enterPin")}</p>
             <p className="small muted">{t("cp.pinSub")}</p>
@@ -393,7 +423,36 @@ export default function Checkpoint() {
               <button disabled={busy} onClick={() => press("0")}>0</button>
               <button disabled={busy} onClick={() => setPin(pin.slice(0, -1))}>⌫</button>
             </div>
+            <button className="btn ghost big" style={{ marginTop: 14 }} onClick={() => setJoining(true)}>
+              {t("cp.newHere")}
+            </button>
           </>
+        )}
+
+        {!result && !joined && !user && checkpoint && joining && (
+          <form onSubmit={submitJoin} style={{ textAlign: "left", marginTop: 8 }}>
+            <h2 style={{ textAlign: "center" }}>{t("cp.joinTitle")}</h2>
+            <p className="muted small" style={{ textAlign: "center" }}>{t("cp.joinSub")}</p>
+            <div className="grid2">
+              <label className="field"><span>{t("emp.first")}</span>
+                <input value={join.first_name} onChange={(e) => setJoin({ ...join, first_name: e.target.value })} required autoFocus />
+              </label>
+              <label className="field"><span>{t("emp.last")}</span>
+                <input value={join.last_name} onChange={(e) => setJoin({ ...join, last_name: e.target.value })} />
+              </label>
+            </div>
+            <label className="field"><span>{t("cp.joinCode")}</span>
+              <input value={join.pin} inputMode="numeric" pattern="\d{4}" maxLength={4} placeholder="••••" required
+                onChange={(e) => setJoin({ ...join, pin: e.target.value.replace(/\D/g, "").slice(0, 4) })}
+                style={{ textAlign: "center", letterSpacing: "0.4em", fontWeight: 600, fontSize: 20 }} />
+              <span className="small" style={{ marginTop: 4 }}>{t("cp.joinCodeHint")}</span>
+            </label>
+            {error && <div className="error-box">{error}</div>}
+            <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.joinBtn")}</button>
+            <p className="small muted" style={{ textAlign: "center", marginTop: 12 }}>
+              <a href="#code" onClick={(e) => { e.preventDefault(); setJoining(false); setError(""); }}>{t("cp.haveCode")}</a>
+            </p>
+          </form>
         )}
 
         {isEmployee && (

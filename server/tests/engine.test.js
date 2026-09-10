@@ -304,6 +304,39 @@ test("second tag attaches to the SAME clinic as another entrance", async () => {
   }), /already linked/);
 });
 
+test("self-serve join: pending account can't scan until an admin approves it", async () => {
+  const { joinClinic, setMemberStatus } = await import("../domains/org.js");
+  const admin = await db.get("SELECT * FROM users WHERE email = 'box@t.test'");
+
+  const { user: pending, created } = await joinClinic({
+    tag_code: "tag-abc-123", first_name: "Nou", last_name: "Venit", pin: "2468",
+  });
+  assert.equal(created, true);
+  assert.equal(pending.employment_status, "pending");
+  assert.equal(pending.pin, "2468"); // the worker's own chosen code
+
+  // A code already used in this clinic is refused; a malformed one too.
+  await assert.rejects(joinClinic({ tag_code: "tag-abc-123", first_name: "Alt", last_name: "Om", pin: "2468" }), /already used/);
+  await assert.rejects(joinClinic({ tag_code: "tag-abc-123", first_name: "Alt", last_name: "Om", pin: "12" }), /4 digits/);
+
+  // Double submit is idempotent.
+  const again = await joinClinic({ tag_code: "tag-abc-123", first_name: "nou", last_name: "VENIT" });
+  assert.equal(again.created, false);
+  assert.equal(again.user.id, pending.id);
+
+  // Scans refused while pending.
+  await assert.rejects(tapToggle(await user(pending.id), { method: "NFC" }), /waiting for the clinic admin/);
+
+  // Admin approves → scanning works.
+  await setMemberStatus(admin, pending.id, "active");
+  const r = await tapToggle(await user(pending.id), { method: "NFC" });
+  assert.equal(r.did, "in");
+
+  // Another org's admin cannot approve.
+  const outsider = await db.get("SELECT * FROM users WHERE email = 'e@b.test'");
+  await assert.rejects(setMemberStatus({ ...outsider, role: "admin" }, pending.id, "active"), /not found/);
+});
+
 // ---------------------------------------------------------------- corrections audit
 test("approved corrections update attendance and leave an audit trail", async () => {
   const corrId = await requestCorrection(await user(empA), {
