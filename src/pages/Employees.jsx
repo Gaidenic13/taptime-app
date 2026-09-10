@@ -231,8 +231,10 @@ export default function Employees() {
             <div className="person-main">
               <strong>{e.first_name} {e.last_name}</strong>
               <div className="small muted">
-                {e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : "")}
-                {e.pin ? ` · ${t("emp.code")} ${e.pin}` : ""}
+                {[
+                  e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : null),
+                  e.pin ? `${t("emp.code")} ${e.pin}` : null,
+                ].filter(Boolean).join(" · ")}
               </div>
             </div>
             <div className="row" style={{ gap: 6 }}>

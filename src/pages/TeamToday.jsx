@@ -48,7 +48,7 @@ export default function TeamToday() {
         </div>
       )}
 
-      <div className="stats">
+      <div className="stats" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         <div className="stat hl"><div className="n">{inNow}</div><div className="l">{t("team.inNow")}</div></div>
         <div className="stat"><div className="n">{outToday}</div><div className="l">{t("team.outToday")}</div></div>
         <div className="stat"><div className="n">{notYet}</div><div className="l">{t("team.notYet")}</div></div>
