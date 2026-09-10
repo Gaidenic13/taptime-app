@@ -63,9 +63,9 @@ CREATE TABLE IF NOT EXISTS users (
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
+  email TEXT UNIQUE,                 -- NULL for scan-only members (no login)
   phone TEXT DEFAULT '',
-  password_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL DEFAULT '',
   pin TEXT DEFAULT '',
   role TEXT NOT NULL DEFAULT 'employee',
   job_role_id INTEGER REFERENCES job_roles(id),

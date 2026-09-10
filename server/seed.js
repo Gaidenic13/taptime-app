@@ -31,11 +31,15 @@ for (const t of wipe) await db.run(`DELETE FROM ${t}`);
 
 const now = nowIso();
 
-// --- organization ----------------------------------------------------------
+// --- organization (seeded org counts as already onboarded) -----------------
 const orgId = await insert(`
   INSERT INTO organizations (name, slug, timezone, created_at, updated_at)
   VALUES ('Zâmbet Dental', 'zambet-dental', 'Europe/Bucharest', ?, ?)
 `, now, now);
+
+await db.run(
+  "INSERT INTO settings (organization_id, key, value) VALUES (?, 'onboarded', 'true')", orgId
+);
 
 // --- locations (real-ish Bucharest coordinates for geo checks) -------------
 const addLoc = (name, address, lat, lng) => insert(`

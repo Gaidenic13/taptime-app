@@ -56,8 +56,8 @@ function EmployeeModal({ employee, directory, onClose, onDone }) {
           </label>
         </div>
         {!editing && (
-          <label className="field"><span>{t("common.email")}</span>
-            <input type="email" value={form.email} onChange={set("email")} required />
+          <label className="field"><span>{t("emp.emailOpt")}</span>
+            <input type="email" value={form.email} onChange={set("email")} required={form.role !== "employee"} />
           </label>
         )}
         <div className="grid2">

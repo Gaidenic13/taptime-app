@@ -86,6 +86,11 @@ test("check-out without an open session is rejected", async () => {
 });
 
 test("no-shift + unknown-device clock-in is held for review and flagged", async () => {
+  // The no-shift signal only applies to orgs that actually schedule shifts.
+  await db.run(`
+    INSERT INTO shifts (organization_id, user_id, date, start_time, end_time)
+    VALUES (?, ?, '2020-01-06', '08:00', '16:00')
+  `, orgA, mgrA);
   const s = await clockIn(await user(empA2), { deviceKnown: false });
   assert.equal(s.status, "requires_review");
   assert.equal(s.attendance.risk_level, "high");
@@ -207,6 +212,34 @@ test("expired challenges are rejected", async () => {
   await db.run("UPDATE attendance_challenges SET expires_at = ? WHERE token = ?",
     new Date(Date.now() - 1000).toISOString(), ch.token);
   assert.equal(await consumeChallenge(ch.token, await user(empA)), null);
+});
+
+// ---------------------------------------------------------------- self-serve signup
+test("signup provisions org + admin + checkpoint; quick-add members scan without shifts un-flagged", async () => {
+  const { createOrganization, quickAddMember } = await import("../domains/org.js");
+  const s = await createOrganization({
+    clinic_name: "Test Clinic", first_name: "Ada", last_name: "Admin",
+    email: "ada@new.test", password: "secret1",
+  });
+  assert.ok(s.token && s.user.id && s.checkpoint_code);
+  assert.equal(s.user.role, "admin");
+
+  // Duplicate email rejected.
+  await assert.rejects(createOrganization({
+    clinic_name: "X", first_name: "A", last_name: "B", email: "ada@new.test", password: "secret1",
+  }), /already has an account/);
+
+  // Quick-add: name only → unique PIN, no email.
+  const m = await quickAddMember(s.user, { first_name: "Mia", last_name: "Member" });
+  assert.match(m.pin, /^\d{4}$/);
+  const member = await user(m.id);
+  assert.equal(member.email, null);
+
+  // A brand-new clinic without shift scheduling: first scan is NOT flagged.
+  const r = await tapToggle(member, { method: "NFC", deviceKnown: false });
+  assert.equal(r.did, "in");
+  assert.equal(r.today.attendance.risk_level, "low");
+  assert.equal(r.today.status, "working");
 });
 
 // ---------------------------------------------------------------- corrections audit

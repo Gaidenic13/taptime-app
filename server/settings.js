@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   location_mode: "optional",   // required | preferred | optional | disabled
   high_risk_action: "review",  // accept | flag | review  (what to do with HIGH risk events)
   break_max_min: 90,           // breaks longer than this get flagged
+  onboarded: false,            // out-of-the-box wizard completed
 };
 
 export async function getSettings(orgId) {

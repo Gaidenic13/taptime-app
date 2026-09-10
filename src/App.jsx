@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api, setToken } from "./api.js";
 import { I18nProvider, useI18n, LangSwitch } from "./i18n.jsx";
 import Bell from "./components/Bell.jsx";
 import Login from "./pages/Login.jsx";
+import Signup from "./pages/Signup.jsx";
+import Setup from "./pages/Setup.jsx";
 import Terminal from "./pages/Terminal.jsx";
 import Checkpoint from "./pages/Checkpoint.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -43,6 +45,7 @@ const MANAGER_GROUPS = [
     { to: "/leave", key: "nav.leave" },
   ]},
   { key: "nav.g.admin", admin: true, items: [
+    { to: "/setup", key: "nav.setup" },
     { to: "/settings", key: "nav.settings" },
   ]},
 ];
@@ -115,6 +118,17 @@ function AppInner() {
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // Out-of-the-box flow: an admin whose clinic hasn't finished onboarding is
+  // taken straight to the setup wizard.
+  const checkOnboarding = async (u) => {
+    if (u.role !== "admin" && u.role !== "owner") return;
+    try {
+      const d = await api("/admin/settings");
+      if (!d.settings.onboarded) navigate("/setup", { replace: true });
+    } catch { /* non-fatal */ }
+  };
 
   const refreshPending = useCallback(async (u) => {
     const who = u || user;
@@ -129,7 +143,7 @@ function AppInner() {
 
   useEffect(() => {
     api("/me")
-      .then((d) => { setUser(d.user); refreshPending(d.user); })
+      .then((d) => { setUser(d.user); refreshPending(d.user); checkOnboarding(d.user); })
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,6 +154,7 @@ function AppInner() {
     setToken(d.token);
     setUser(d.user);
     refreshPending(d.user);
+    checkOnboarding(d.user);
     return d.user;
   };
 
@@ -149,7 +164,8 @@ function AppInner() {
     setUser(null);
   };
 
-  const ctx = { user, login, logout, pendingCount, refreshPending };
+  const adoptSession = (u) => { setUser(u); refreshPending(u); };
+  const ctx = { user, login, logout, adoptSession, pendingCount, refreshPending };
 
   if (location.pathname === "/terminal") return <Terminal />;
   if (loading) return null;
@@ -166,7 +182,10 @@ function AppInner() {
   if (!user) {
     return (
       <AuthCtx.Provider value={ctx}>
-        <Login />
+        <Routes>
+          <Route path="/signup" element={<Signup />} />
+          <Route path="*" element={<Login />} />
+        </Routes>
       </AuthCtx.Provider>
     );
   }
@@ -188,6 +207,7 @@ function AppInner() {
           {isManager && <Route path="/approvals" element={<Approvals />} />}
           {isManager && <Route path="/employees" element={<Employees />} />}
           {isManager && <Route path="/reports" element={<Reports />} />}
+          {isAdmin && <Route path="/setup" element={<Setup />} />}
           {isAdmin && <Route path="/settings" element={<Settings />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

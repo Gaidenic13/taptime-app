@@ -93,12 +93,15 @@ export async function dayStatus(userId, date) {
 // ---------------------------------------------------------------- risk (Phase 8)
 // Multi-signal evaluation. Shift-window signals only apply to the FIRST session
 // of the day — re-entering after lunch is normal, not "very late".
-function assessClockIn({ shift, settings, method, viaCheckpoint, deviceKnown, geo, location, firstSession }) {
+function assessClockIn({ shift, settings, method, viaCheckpoint, deviceKnown, geo, location, firstSession, orgUsesShifts }) {
   const signals = [];
 
   if (firstSession) {
-    if (!shift) signals.push("no_shift");
-    else {
+    if (!shift) {
+      // "No shift" only means something in clinics that actually schedule
+      // shifts — a minimal-setup clinic that just scans is never penalized.
+      if (orgUsesShifts) signals.push("no_shift");
+    } else {
       const start = new Date(dateTimeIso(todayStr(), shift.start_time));
       const deltaMin = Math.round((Date.now() - start.getTime()) / 60000);
       if (deltaMin < -settings.clock_in_early_min) signals.push("too_early");
@@ -163,9 +166,11 @@ export async function clockIn(user, {
 
   const locId = locationId || shift?.location_id || user.location_id;
   const location = locId ? await db.get("SELECT * FROM locations WHERE id = ?", locId) : null;
+  const orgUsesShifts = !!shift ||
+    !!(await db.get("SELECT id FROM shifts WHERE organization_id = ? LIMIT 1", orgId));
   const { level, signals } = assessClockIn({
     shift, settings, method, viaCheckpoint, deviceKnown, geo, location,
-    firstSession: priorSessions.length === 0,
+    firstSession: priorSessions.length === 0, orgUsesShifts,
   });
 
   const status = level === "high" && settings.high_risk_action === "review" ? "requires_review" : "working";

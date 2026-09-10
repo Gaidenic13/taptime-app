@@ -19,6 +19,7 @@ import {
   checkpointByCode, createChallenge, consumeChallenge, createCheckpoint, createKiosk, resetKiosk,
 } from "./domains/checkpoints.js";
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
+import { createOrganization, quickAddMember } from "./domains/org.js";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
 
@@ -43,6 +44,9 @@ const handle = (fn) => async (req, res) => {
     res.status(e.status || 400).json({ error: e.message });
   }
 };
+
+// ---------------------------------------------------------------- signup (self-serve)
+app.post("/api/orgs/signup", handle(async (req) => createOrganization(req.body || {})));
 
 // ---------------------------------------------------------------- auth
 app.post("/api/auth/login", handle(async (req) => {
@@ -366,9 +370,19 @@ async function assertPinFree(orgId, pin, excludeUserId = null) {
   if (clash) throw new Error("That PIN is already used by another employee — pick a different one");
 }
 
+// One-field onboarding: name in, unique PIN out — no email, no password.
+app.post("/api/employees/quick", requireAuth, requireAdmin, handle(async (req) =>
+  quickAddMember(req.user, req.body || {})
+));
+
 app.post("/api/employees", requireAuth, requireAdmin, handle(async (req) => {
   const b = req.body || {};
-  if (!b.first_name || !b.last_name || !b.email) throw new Error("first_name, last_name, email required");
+  if (!b.first_name || !b.last_name) throw new Error("first_name and last_name required");
+  // Email is only needed when the person will LOG IN (manager/admin, or an
+  // employee who wants app access). Scan-only members need just a PIN.
+  if ((b.role && b.role !== "employee") && !b.email) {
+    throw new Error("Managers and admins need an email to sign in");
+  }
   await assertPinFree(req.orgId, b.pin);
   try {
     const id = await insert(`
@@ -376,8 +390,8 @@ app.post("/api/employees", requireAuth, requireAdmin, handle(async (req) => {
                          job_role_id, department_id, location_id, manager_id, employment_start, leave_balance)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      req.orgId, b.first_name, b.last_name, b.email.trim().toLowerCase(), b.phone || "",
-      hashPassword(b.password || "taptime123"), b.pin || "", b.role || "employee",
+      req.orgId, b.first_name, b.last_name, b.email ? b.email.trim().toLowerCase() : null, b.phone || "",
+      b.email ? hashPassword(b.password || "taptime123") : "", b.pin || "", b.role || "employee",
       b.job_role_id || null, b.department_id || null, b.location_id || null,
       b.manager_id || req.user.id, b.employment_start || todayStr(), b.leave_balance ?? 21
     );
