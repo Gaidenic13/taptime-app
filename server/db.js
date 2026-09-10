@@ -256,6 +256,14 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TEXT NOT NULL
 );
 
+-- Brute-force guard for PIN entry at checkpoints (source = device token or IP).
+CREATE TABLE IF NOT EXISTS pin_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   organization_id INTEGER REFERENCES organizations(id),
@@ -274,6 +282,7 @@ CREATE INDEX IF NOT EXISTS idx_shifts_org_date ON shifts(organization_id, date);
 CREATE INDEX IF NOT EXISTS idx_flags_open ON attendance_flags(organization_id, status);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, read_at);
 CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_log(organization_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pin_attempts ON pin_attempts(source, created_at);
 `;
 
 let db;

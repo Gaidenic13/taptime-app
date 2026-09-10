@@ -19,29 +19,46 @@ import Settings from "./pages/Settings.jsx";
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
 
-const NAV = [
+// Three parts of the app (plan: employee / place manager / administration).
+// Employees get a flat, minimal menu; managers and admins get grouped sections.
+const EMPLOYEE_NAV = [
   { to: "/", key: "nav.dashboard", end: true },
   { to: "/attendance", key: "nav.attendance" },
   { to: "/schedule", key: "nav.schedule" },
   { to: "/leave", key: "nav.leave" },
-  { to: "/team", key: "nav.team", manager: true },
-  { to: "/approvals", key: "nav.approvals", manager: true },
-  { to: "/employees", key: "nav.employees", manager: true },
-  { to: "/reports", key: "nav.reports", manager: true },
-  { to: "/settings", key: "nav.settings", admin: true },
+];
+const MANAGER_GROUPS = [
+  { key: "nav.g.clinic", items: [
+    { to: "/team", key: "nav.team" },
+    { to: "/approvals", key: "nav.approvals" },
+    { to: "/reports", key: "nav.reports" },
+    { to: "/employees", key: "nav.employees" },
+  ]},
+  { key: "nav.g.me", items: [
+    { to: "/me", key: "nav.me" },
+    { to: "/attendance", key: "nav.attendance" },
+    { to: "/schedule", key: "nav.schedule" },
+    { to: "/leave", key: "nav.leave" },
+  ]},
+  { key: "nav.g.admin", admin: true, items: [
+    { to: "/settings", key: "nav.settings" },
+  ]},
 ];
 
 const MOBILE_EMPLOYEE = ["/", "/attendance", "/schedule", "/leave"];
-const MOBILE_MANAGER = ["/", "/team", "/approvals", "/reports"];
+const MOBILE_MANAGER = ["/team", "/approvals", "/me", "/reports"];
 
 function Shell({ children }) {
   const { user, logout, pendingCount } = useAuth();
   const { t } = useI18n();
   const isManager = user.role !== "employee";
   const isAdmin = user.role === "admin" || user.role === "owner";
-  const items = NAV.filter((n) => (!n.manager || isManager) && (!n.admin || isAdmin));
+  const groups = isManager
+    ? MANAGER_GROUPS.filter((g) => !g.admin || isAdmin)
+    : [{ items: EMPLOYEE_NAV }];
+  const flat = groups.flatMap((g) => g.items);
   const mobileSet = isManager ? MOBILE_MANAGER : MOBILE_EMPLOYEE;
-  const mobileItems = items.filter((n) => mobileSet.includes(n.to));
+  const mobileItems = mobileSet.map((to) => flat.find((n) => n.to === to)).filter(Boolean);
 
   const badge = (n) => (n.to === "/approvals" && pendingCount > 0 ? ` (${pendingCount})` : "");
 
@@ -49,10 +66,15 @@ function Shell({ children }) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">T</span>TapTime</div>
-        {items.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}>
-            {t(n.key)}{badge(n)}
-          </NavLink>
+        {groups.map((g, gi) => (
+          <React.Fragment key={gi}>
+            {g.key && <div className="nav-sec">{t(g.key)}</div>}
+            {g.items.map((n) => (
+              <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}>
+                {t(n.key)}{badge(n)}
+              </NavLink>
+            ))}
+          </React.Fragment>
         ))}
         <div className="nav-spacer" />
         <div style={{ padding: "0 8px 14px" }}><LangSwitch /></div>
@@ -153,7 +175,9 @@ function AppInner() {
     <AuthCtx.Provider value={ctx}>
       <Shell>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          {/* Managers land on the clinic view; their personal day lives at /me. */}
+          <Route path="/" element={isManager ? <Navigate to="/team" replace /> : <Dashboard />} />
+          <Route path="/me" element={<Dashboard />} />
           <Route path="/attendance" element={<MyAttendance />} />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/leave" element={<Leave />} />

@@ -260,6 +260,26 @@ export async function breakAction(user, action) {
   return dayStatus(user.id, date);
 }
 
+// ---------------------------------------------------------------- tap toggle
+// One-gesture attendance for checkpoints: the server decides whether a tap is
+// an "in" or an "out" from current state. A tap within 2 minutes of clocking
+// in is treated as an accidental double tap, not a clock-out.
+export async function tapToggle(user, { method = "NFC", locationId = null, geo = null, deviceKnown = true } = {}) {
+  const date = todayStr();
+  const att = await attToday(db, user.id, date);
+  if (!att) {
+    return {
+      did: "in",
+      today: await clockIn(user, { method, locationId, geo, viaCheckpoint: true, deviceKnown }),
+    };
+  }
+  if (att.clock_out) return { did: "done", today: await dayStatus(user.id, date) };
+  if (minutesBetween(att.clock_in, nowIso()) < 2) {
+    return { did: "in_recent", today: await dayStatus(user.id, date) };
+  }
+  return { did: "out", today: await clockOut(user, { method, locationId }) };
+}
+
 // ---------------------------------------------------------------- review queue
 export async function resolveReview(reviewer, attendanceId, decision, note = "") {
   const att = await db.get("SELECT * FROM attendance WHERE id = ?", attendanceId);

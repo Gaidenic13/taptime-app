@@ -13,7 +13,7 @@ process.env.NODE_ENV = "test";
 
 const { db, insert, isPg } = await import("../db.js");
 const { hashPassword } = await import("../auth.js");
-const { clockIn, clockOut, breakAction } = await import("../domains/attendance.js");
+const { clockIn, clockOut, breakAction, tapToggle } = await import("../domains/attendance.js");
 const { createShift, validateShift } = await import("../domains/scheduling.js");
 const { createChallenge, consumeChallenge, checkpointByCode } = await import("../domains/checkpoints.js");
 const { requestLeave, decide, pendingApprovals, requestCorrection } = await import("../domains/requests.js");
@@ -87,6 +87,35 @@ test("require_shift_to_clock_in blocks unscheduled clock-ins when enabled", asyn
   await setSetting(orgA, "require_shift_to_clock_in", true);
   await assert.rejects(clockIn(await user(mgrA), { deviceKnown: true }), /no scheduled shift/);
   await setSetting(orgA, "require_shift_to_clock_in", false);
+});
+
+test("tap toggle: in → double-tap guard → out → done", async () => {
+  const empTap = await insert(`
+    INSERT INTO users (organization_id, first_name, last_name, email, password_hash, role, job_role_id, location_id, pin)
+    VALUES (?, 'Tap', 'User', 'tap@a.test', 'x:x', 'employee', ?, ?, '9876')
+  `, orgA, roleA, locA);
+
+  let r = await tapToggle(await user(empTap), { method: "NFC", locationId: locA });
+  assert.equal(r.did, "in");
+  assert.equal(r.today.attendance.clock_in_method, "NFC");
+
+  // Immediate second tap is an accidental double tap, not a clock-out.
+  r = await tapToggle(await user(empTap), { method: "NFC", locationId: locA });
+  assert.equal(r.did, "in_recent");
+  assert.equal(r.today.status, "working");
+
+  // Backdate the clock-in past the guard window → next tap clocks out.
+  await db.run(
+    "UPDATE attendance SET clock_in = ? WHERE user_id = ? AND clock_out IS NULL",
+    new Date(Date.now() - 5 * 60000).toISOString(), empTap
+  );
+  r = await tapToggle(await user(empTap), { method: "NFC", locationId: locA });
+  assert.equal(r.did, "out");
+  assert.ok(r.today.attendance.clock_out);
+
+  // Day recorded → further taps are no-ops.
+  r = await tapToggle(await user(empTap), { method: "NFC", locationId: locA });
+  assert.equal(r.did, "done");
 });
 
 // ---------------------------------------------------------------- scheduling

@@ -80,6 +80,28 @@ export function requireRole(minRole) {
 export const requireManager = requireRole("manager");
 export const requireAdmin = requireRole("admin");
 
+// --- PIN brute-force guard (checkpoint tap flow) -----------------------------
+// Max 5 failed attempts per source (device token or IP) in a 10-minute window.
+export async function assertPinAllowed(source) {
+  const windowStart = new Date(Date.now() - 10 * 60000).toISOString();
+  const fails = (await db.get(
+    "SELECT COUNT(*) AS n FROM pin_attempts WHERE source = ? AND success = 0 AND created_at > ?",
+    source, windowStart
+  )).n;
+  if (fails >= 5) {
+    const e = new Error("Too many PIN attempts — try again in a few minutes");
+    e.status = 429;
+    throw e;
+  }
+}
+
+export async function recordPinAttempt(source, success) {
+  await db.run(
+    "INSERT INTO pin_attempts (source, success, created_at) VALUES (?, ?, ?)",
+    source, success ? 1 : 0, new Date().toISOString()
+  );
+}
+
 // --- kiosk restricted sessions (plan Phase 7.3) ------------------------------
 export async function registerKiosk(setupCode) {
   const kiosk = await db.get(

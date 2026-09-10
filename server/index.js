@@ -7,8 +7,9 @@ import { getSettings, setSetting, DEFAULT_SETTINGS } from "./settings.js";
 import {
   hashPassword, verifyPassword, createSession, destroySession,
   requireAuth, requireManager, requireAdmin, touchDevice, registerKiosk, requireKiosk,
+  assertPinAllowed, recordPinAttempt,
 } from "./auth.js";
-import { dayStatus, clockIn, clockOut, breakAction, resolveReview } from "./domains/attendance.js";
+import { dayStatus, clockIn, clockOut, breakAction, resolveReview, tapToggle } from "./domains/attendance.js";
 import { createShift, deleteShift, weekShifts } from "./domains/scheduling.js";
 import { coverageFor } from "./domains/staffing.js";
 import {
@@ -115,6 +116,41 @@ app.post("/api/checkpoint/consume", requireAuth, handle(async (req) => {
       viaCheckpoint: true, deviceKnown: known,
     }),
   };
+}));
+
+// PIN tap flow (public): the friendliest path for employees — tap the tag,
+// enter your 4-digit PIN, and the server decides in vs out. The challenge
+// scopes the PIN lookup to the checkpoint's organization; wrong PINs are
+// rate-limited per device/IP and never burn the challenge.
+app.post("/api/checkpoint/pin", handle(async (req) => {
+  const { challenge, pin, geo } = req.body || {};
+  const source = req.headers["x-device-token"] || req.ip || "unknown";
+  await assertPinAllowed(source);
+
+  const now = new Date().toISOString();
+  const ch = await db.get(
+    "SELECT * FROM attendance_challenges WHERE token = ? AND consumed_at IS NULL AND expires_at > ?",
+    challenge, now
+  );
+  if (!ch) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
+
+  const user = await db.get(
+    "SELECT * FROM users WHERE pin = ? AND pin != '' AND active = 1 AND organization_id = ?",
+    String(pin || ""), ch.organization_id
+  );
+  if (!user) {
+    await recordPinAttempt(source, false);
+    const e = new Error("PIN not recognized"); e.status = 401; throw e;
+  }
+  await recordPinAttempt(source, true);
+
+  const cp = await consumeChallenge(challenge, user);
+  if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
+  const { known } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
+  const result = await tapToggle(user, {
+    method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known,
+  });
+  return { user: { first_name: user.first_name }, ...result };
 }));
 
 // ---------------------------------------------------------------- kiosk (restricted session)
@@ -231,12 +267,14 @@ app.post("/api/leave", requireAuth, handle(async (req) => requestLeave(req.user,
 // ---------------------------------------------------------------- team & approvals (manager)
 app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
   const date = req.query.date || todayStr();
+  const locationId = Number(req.query.location_id) || null;
   const users = await db.all(`
     SELECT u.*, jr.name AS job_title, l.name AS location_name FROM users u
     LEFT JOIN job_roles jr ON jr.id = u.job_role_id
     LEFT JOIN locations l ON l.id = u.location_id
-    WHERE u.organization_id = ? AND u.active = 1 ORDER BY jr.name, u.last_name
-  `, req.orgId);
+    WHERE u.organization_id = ? AND u.active = 1 ${locationId ? "AND u.location_id = ?" : ""}
+    ORDER BY jr.name, u.last_name
+  `, ...(locationId ? [req.orgId, locationId] : [req.orgId]));
   const roster = [];
   for (const u of users) {
     const d = await dayStatus(u.id, date);
@@ -245,6 +283,8 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
       location: u.location_name, status: d.status,
       shift: d.shift ? `${d.shift.start_time}–${d.shift.end_time}` : null,
       clock_in: d.attendance?.clock_in || null,
+      clock_out: d.attendance?.clock_out || null,
+      method: d.attendance?.clock_in_method || null,
       risk: d.attendance?.risk_level || null,
       worked_min: d.worked_min,
     });
@@ -260,7 +300,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
     if (["working", "break", "complete"].includes(r.status)) coverage[r.job_title].present++;
   }
 
-  const staffing = await coverageFor(req.orgId, date);
+  const staffing = await coverageFor(req.orgId, date, { locationId });
   const pending = await pendingApprovals(req.orgId);
   return {
     date, counts, roster, coverage, staffing,
@@ -310,9 +350,20 @@ app.get("/api/employees", requireAuth, requireManager, handle(async (req) => ({
   `, req.orgId)).map((u) => { const { password_hash, ...rest } = u; return rest; }),
 })));
 
+// PINs identify employees at checkpoints/kiosks, so they must be unique per org.
+async function assertPinFree(orgId, pin, excludeUserId = null) {
+  if (!pin) return;
+  const clash = await db.get(
+    "SELECT id FROM users WHERE organization_id = ? AND pin = ? AND id != ?",
+    orgId, String(pin), excludeUserId || 0
+  );
+  if (clash) throw new Error("That PIN is already used by another employee — pick a different one");
+}
+
 app.post("/api/employees", requireAuth, requireAdmin, handle(async (req) => {
   const b = req.body || {};
   if (!b.first_name || !b.last_name || !b.email) throw new Error("first_name, last_name, email required");
+  await assertPinFree(req.orgId, b.pin);
   try {
     const id = await insert(`
       INSERT INTO users (organization_id, first_name, last_name, email, phone, password_hash, pin, role,
@@ -338,6 +389,7 @@ app.post("/api/employees", requireAuth, requireAdmin, handle(async (req) => {
 app.patch("/api/employees/:id", requireAuth, requireAdmin, handle(async (req) => {
   const target = await db.get("SELECT * FROM users WHERE id = ?", req.params.id);
   if (!target || target.organization_id !== req.orgId) throw new Error("Employee not found");
+  if (req.body?.pin) await assertPinFree(req.orgId, req.body.pin, target.id);
   const allowed = ["first_name", "last_name", "phone", "pin", "role", "job_role_id",
     "department_id", "location_id", "manager_id", "leave_balance", "active"];
   const sets = [], vals = [], prev = {}, next = {};

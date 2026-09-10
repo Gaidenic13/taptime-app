@@ -17,12 +17,15 @@ const STAT_ORDER = [
 export default function TeamToday() {
   const { t } = useI18n();
   const [data, setData] = useState(null);
-  const load = () => api("/team/today").then(setData);
+  const [locations, setLocations] = useState([]);
+  const [locId, setLocId] = useState("");
+  const load = (l = locId) => api(`/team/today${l ? `?location_id=${l}` : ""}`).then(setData);
+  useEffect(() => { api("/directory").then((d) => setLocations(d.locations)); }, []);
   useEffect(() => {
-    load();
-    const timer = setInterval(load, 60000);
+    load(locId);
+    const timer = setInterval(() => load(locId), 60000);
     return () => clearInterval(timer);
-  }, []);
+  }, [locId]);
 
   if (!data) return null;
   const byRole = {};
@@ -39,9 +42,21 @@ export default function TeamToday() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>{t("team.title")}</h1>
-        <p>{fmtLongDate()} · {t("team.live")}</p>
+      <div className="page-head spread">
+        <div>
+          <h1>{t("team.title")}</h1>
+          <p>{fmtLongDate()} · {t("team.live")}</p>
+        </div>
+        {locations.length > 1 && (
+          <div className="seg">
+            <button className={locId === "" ? "active" : ""} onClick={() => setLocId("")}>{t("team.allLocations")}</button>
+            {locations.map((l) => (
+              <button key={l.id} className={locId === String(l.id) ? "active" : ""} onClick={() => setLocId(String(l.id))}>
+                {l.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="stats">
@@ -128,7 +143,8 @@ export default function TeamToday() {
               <thead>
                 <tr>
                   <th>{t("common.name")}</th><th>{t("common.location")}</th><th>{t("common.shift")}</th>
-                  <th>{t("team.clockIn")}</th><th>{t("common.worked")}</th><th>{t("team.risk")}</th><th>{t("common.status")}</th>
+                  <th>{t("team.clockIn")}</th><th>{t("team.clockOut")}</th>
+                  <th>{t("common.worked")}</th><th>{t("team.risk")}</th><th>{t("common.status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,7 +153,8 @@ export default function TeamToday() {
                     <td><strong>{p.name}</strong></td>
                     <td>{p.location || "—"}</td>
                     <td>{p.shift || "—"}</td>
-                    <td>{fmtTime(p.clock_in)}</td>
+                    <td>{fmtTime(p.clock_in)}{p.method && p.method !== "WEB" ? <span className="small muted"> · {p.method}</span> : ""}</td>
+                    <td>{fmtTime(p.clock_out)}</td>
                     <td>{p.worked_min ? fmtMin(p.worked_min) : "—"}</td>
                     <td>{p.risk && p.risk !== "low"
                       ? <span className={`pill risk-${p.risk}`}>{p.risk}</span> : "—"}</td>
