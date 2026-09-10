@@ -118,8 +118,13 @@ app.post("/api/auth/login", handle(async (req) => {
   const user = email
     ? await db.get("SELECT * FROM users WHERE email = ? AND active = 1", email.trim().toLowerCase())
     : null;
-  if (!user || !verifyPassword(password || "", user.password_hash)) {
+  if (!user || !user.password_hash || !verifyPassword(password || "", user.password_hash)) {
     const err = new Error("Invalid email or password"); err.status = 401; throw err;
+  }
+  // The app login is for managers/admins only — team members just scan.
+  if (user.role === "employee") {
+    const err = new Error("Team members don't sign in — just scan the clinic tag");
+    err.status = 403; throw err;
   }
   const token = await createSession(user.id);
   await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);

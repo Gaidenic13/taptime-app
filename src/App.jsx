@@ -16,6 +16,7 @@ import Leave from "./pages/Leave.jsx";
 import TeamToday from "./pages/TeamToday.jsx";
 import Days from "./pages/Days.jsx";
 import More from "./pages/More.jsx";
+import MemberHome from "./pages/MemberHome.jsx";
 import Approvals from "./pages/Approvals.jsx";
 import Employees from "./pages/Employees.jsx";
 import Reports from "./pages/Reports.jsx";
@@ -189,6 +190,16 @@ function AppInner() {
           <Route path="/signup" element={<Signup />} />
           <Route path="*" element={<Login />} />
         </Routes>
+      </AuthCtx.Provider>
+    );
+  }
+
+  // Team members never get the app shell — their world is the scan page.
+  // An activated member landing here sees one card with today's scans.
+  if (user.role === "employee") {
+    return (
+      <AuthCtx.Provider value={ctx}>
+        <MemberHome />
       </AuthCtx.Provider>
     );
   }

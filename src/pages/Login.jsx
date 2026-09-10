@@ -40,6 +40,7 @@ export default function Login() {
         </label>
         {error && <div className="error-box">{error}</div>}
         <button className="btn big" disabled={busy}>{busy ? t("login.signingin") : t("login.signin")}</button>
+        <p className="small muted" style={{ marginTop: 12 }}>{t("login.membersNote")}</p>
         <p className="small muted" style={{ marginTop: 18 }}>
           {t("login.new")} <Link to="/signup">{t("login.signup")}</Link>
         </p>
