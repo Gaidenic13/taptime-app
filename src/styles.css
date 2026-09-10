@@ -27,6 +27,9 @@
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
+html, body {
+  overflow-x: hidden; /* the page itself only scrolls vertically */
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -36,6 +39,8 @@ body {
   letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
+/* long URLs / codes wrap instead of pushing the layout sideways */
+.list-item .small, .kv td, .empty { overflow-wrap: anywhere; }
 h1, h2, h3, h4 { margin: 0 0 8px; font-weight: 600; letter-spacing: -0.02em; }
 h1 { font-size: 26px; }
 h2 { font-size: 16px; }
@@ -372,6 +377,36 @@ td strong { font-weight: 600; }
   color: var(--faint); cursor: pointer; font-size: 13px; padding: 2px;
 }
 .shift-chip.mine { background: var(--card-solid); box-shadow: inset 0 0 0 1.5px var(--hairline); }
+
+/* ---------- More menu (mobile settings-style list) ---------- */
+.menu-sec {
+  margin: 20px 14px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--faint);
+  font-weight: 600;
+}
+.menu-sec:first-of-type { margin-top: 4px; }
+.menu-card {
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  border-bottom: 1px dashed var(--hairline);
+}
+.menu-row:last-child { border-bottom: none; }
+.menu-row:active { background: var(--raised); }
+.menu-row .chev { color: var(--faint); font-weight: 500; font-size: 17px; }
 
 /* ---------- misc ---------- */
 .seg { display: inline-flex; background: var(--card); border-radius: 999px; padding: 3px; gap: 2px; }

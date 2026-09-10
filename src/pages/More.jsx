@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../App.jsx";
 import { useI18n } from "../i18n.jsx";
 
-// Mobile overflow menu: everything that doesn't fit in the bottom tab bar.
-// Mirrors the desktop sidebar's grouped navigation.
+// Mobile overflow menu — settings-style grouped list matching the tab bar's
+// tone: section labels, rounded cards, one row per destination.
 export default function More() {
   const { user } = useAuth();
   const { t } = useI18n();
@@ -29,18 +29,22 @@ export default function More() {
 
   return (
     <>
-      <div className="page-head">
+      <div className="page-head" style={{ marginBottom: 6 }}>
         <h1>{t("nav.more")}</h1>
+        <p>{user.first_name} {user.last_name}{user.job_title && user.job_title !== "—" ? ` · ${user.job_title}` : ""}</p>
       </div>
       {groups.map((g) => (
-        <div className="card" key={g.key}>
-          <h2>{t(g.key)}</h2>
-          {g.items.map((n) => (
-            <Link key={n.to} to={n.to} className="list-item" style={{ display: "block", fontWeight: 600, color: "var(--ink)" }}>
-              {t(n.key)} →
-            </Link>
-          ))}
-        </div>
+        <React.Fragment key={g.key}>
+          <div className="menu-sec">{t(g.key)}</div>
+          <div className="menu-card">
+            {g.items.map((n) => (
+              <Link key={n.to} to={n.to} className="menu-row">
+                {t(n.key)}
+                <span className="chev">›</span>
+              </Link>
+            ))}
+          </div>
+        </React.Fragment>
       ))}
     </>
   );
