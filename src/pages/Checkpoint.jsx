@@ -1,8 +1,65 @@
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { api, getGeo, fmtTime, fmtMin } from "../api.js";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { api, setToken, getGeo, fmtTime, fmtMin } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
+
+// Scanning a factory-written, unclaimed tag shows this instead of the PIN pad:
+// setup code from the box + clinic details → org created, tag bound, straight
+// into the onboarding wizard (with the write-the-tag step already done).
+function ClaimForm({ code }) {
+  const { t } = useI18n();
+  const { adoptSession } = useAuth();
+  const navigate = useNavigate();
+  const [form, setForm] = useState({ claim_code: "", clinic_name: "", first_name: "", last_name: "", email: "", password: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setBusy(true);
+    try {
+      const d = await api("/orgs/claim", { method: "POST", body: { ...form, tag_code: code } });
+      setToken(d.token);
+      adoptSession(d.user);
+      navigate("/setup?tag=ready");
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} style={{ textAlign: "left", marginTop: 8 }}>
+      <h2 style={{ textAlign: "center" }}>{t("cp.claimTitle")}</h2>
+      <p className="muted small" style={{ textAlign: "center" }}>{t("cp.claimSub")}</p>
+      <label className="field"><span>{t("cp.claimCode")}</span>
+        <input value={form.claim_code} onChange={set("claim_code")} placeholder="XXXX-XXXX" required autoFocus
+          style={{ textAlign: "center", letterSpacing: "0.15em", fontWeight: 600, textTransform: "uppercase" }} />
+      </label>
+      <label className="field"><span>{t("signup.clinic")}</span>
+        <input value={form.clinic_name} onChange={set("clinic_name")} required />
+      </label>
+      <div className="grid2">
+        <label className="field"><span>{t("signup.first")}</span>
+          <input value={form.first_name} onChange={set("first_name")} required />
+        </label>
+        <label className="field"><span>{t("signup.last")}</span>
+          <input value={form.last_name} onChange={set("last_name")} required />
+        </label>
+      </div>
+      <label className="field"><span>{t("common.email")}</span>
+        <input type="email" value={form.email} onChange={set("email")} required />
+      </label>
+      <label className="field"><span>{t("common.password")}</span>
+        <input type="password" value={form.password} onChange={set("password")} minLength={6} required />
+      </label>
+      {error && <div className="error-box">{error}</div>}
+      <button className="btn big" disabled={busy}>{busy ? t("signup.creating") : t("cp.claimBtn")}</button>
+    </form>
+  );
+}
 
 // Landing page for a QR poster / NFC tag. The URL only identifies the
 // checkpoint; a short-lived server challenge plus a light identity step are
@@ -25,11 +82,15 @@ export default function Checkpoint() {
   const [pin, setPin] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [unclaimed, setUnclaimed] = useState(false);
 
   const fetchChallenge = () => {
     setError("");
     return api(`/checkpoint/${code}`)
-      .then((d) => { setChallenge(d.challenge); setCheckpoint(d.checkpoint); })
+      .then((d) => {
+        if (d.unclaimed) { setUnclaimed(true); return; }
+        setChallenge(d.challenge); setCheckpoint(d.checkpoint);
+      })
       .catch((e) => setError(e.message));
   };
 
@@ -119,7 +180,9 @@ export default function Checkpoint() {
       <div className="corner-lang"><LangSwitch /></div>
       <div className="card checkpoint-card">
         <div className="brand"><span className="brand-mark">T</span>TapTime</div>
-        {checkpoint ? (
+        {unclaimed ? (
+          <ClaimForm code={code} />
+        ) : checkpoint ? (
           <>
             <h2>{checkpoint.name}</h2>
             <p className="muted">{checkpoint.location}</p>
@@ -127,7 +190,7 @@ export default function Checkpoint() {
         ) : (
           <p className="muted">{t("cp.lookup")}</p>
         )}
-        {error && <div className="error-box">{error}</div>}
+        {!unclaimed && error && <div className="error-box">{error}</div>}
 
         {/* -------- result of a tap (any flow) -------- */}
         {result && (

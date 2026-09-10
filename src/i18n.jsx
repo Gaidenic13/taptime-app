@@ -211,6 +211,12 @@ const dict = {
     "cp.workedToday": "Worked today: {dur}",
     "cp.useEmail": "Sign in with email instead",
     "cp.usePin": "Use PIN instead",
+    "cp.claimTitle": "Set up your clinic",
+    "cp.claimSub": "This tag is brand new. Enter the setup code from the card in your box — your clinic will be created and this tag linked to it automatically.",
+    "cp.claimCode": "Setup code (from the box)",
+    "cp.claimBtn": "Create my clinic",
+    "setup.tagReady": "Your tag is already written and linked to this clinic — nothing to write. Print this QR as a backup poster if you like.",
+    "days.device": "phone",
   },
 
   ro: {
@@ -407,6 +413,12 @@ const dict = {
     "cp.workedToday": "Lucrat azi: {dur}",
     "cp.useEmail": "Autentifică-te cu email",
     "cp.usePin": "Folosește PIN-ul",
+    "cp.claimTitle": "Configurează-ți clinica",
+    "cp.claimSub": "Acest tag este nou-nouț. Introdu codul de configurare de pe cardul din cutie — clinica ta se creează și tag-ul se leagă automat de ea.",
+    "cp.claimCode": "Cod de configurare (din cutie)",
+    "cp.claimBtn": "Creează-mi clinica",
+    "setup.tagReady": "Tag-ul tău este deja scris și legat de această clinică — nu ai nimic de scris. Printează acest QR ca afiș de rezervă dacă vrei.",
+    "days.device": "telefon",
   },
 };
 

@@ -30,20 +30,25 @@ export async function destroySession(token) {
 // The client sends a stable random token in X-Device-Token; we record which
 // users have used which device. Absence/newness is a risk signal, not a block.
 export async function touchDevice(userId, deviceToken, userAgent = "") {
-  if (!deviceToken || deviceToken.length < 16 || deviceToken.length > 128) return { known: false };
+  if (!deviceToken || deviceToken.length < 16 || deviceToken.length > 128) {
+    return { known: false, deviceId: null };
+  }
   const now = new Date().toISOString();
   const existing = await db.get(
     "SELECT * FROM devices WHERE token = ? AND user_id = ?", deviceToken, userId
   );
   if (existing) {
     await db.run("UPDATE devices SET last_seen_at = ? WHERE id = ?", now, existing.id);
-    return { known: true };
+    return { known: true, deviceId: existing.id };
   }
   await db.run(
     "INSERT INTO devices (user_id, token, user_agent, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
     userId, deviceToken, String(userAgent).slice(0, 300), now, now
   );
-  return { known: false };
+  const created = await db.get(
+    "SELECT id FROM devices WHERE token = ? AND user_id = ?", deviceToken, userId
+  );
+  return { known: false, deviceId: created?.id ?? null };
 }
 
 // Async middleware: Express 4 does not catch async errors, so guard explicitly.

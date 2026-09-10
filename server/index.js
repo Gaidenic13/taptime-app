@@ -19,7 +19,7 @@ import {
   checkpointByCode, createChallenge, consumeChallenge, createCheckpoint, createKiosk, resetKiosk,
 } from "./domains/checkpoints.js";
 import { listNotifications, unreadCount, markAllRead } from "./domains/notifications.js";
-import { createOrganization, quickAddMember } from "./domains/org.js";
+import { createOrganization, claimTag, quickAddMember } from "./domains/org.js";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
 
@@ -47,6 +47,10 @@ const handle = (fn) => async (req, res) => {
 
 // ---------------------------------------------------------------- signup (self-serve)
 app.post("/api/orgs/signup", handle(async (req) => createOrganization(req.body || {})));
+
+// Pre-written tag claim: the scan page posts the tag's code + the setup code
+// from the box, plus the clinic/admin details. Binds the tag to the new org.
+app.post("/api/orgs/claim", handle(async (req) => claimTag(req.body || {})));
 
 // ---------------------------------------------------------------- auth
 app.post("/api/auth/login", handle(async (req) => {
@@ -79,11 +83,11 @@ app.get("/api/me", requireAuth, handle(async (req) => {
 
 // ---------------------------------------------------------------- clock actions (web)
 app.post("/api/attendance/clock-in", requireAuth, handle(async (req) => {
-  const { known } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
+  const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   return {
     today: await clockIn(req.user, {
       method: "WEB", locationId: req.body?.location_id || null,
-      geo: req.body?.geo || null, deviceKnown: known,
+      geo: req.body?.geo || null, deviceKnown: known, deviceId,
     }),
   };
 }));
@@ -98,7 +102,16 @@ app.post("/api/attendance/break-end", requireAuth, handle(async (req) => ({ toda
 // from the session that consumes it — the code alone never clocks anyone in.
 app.get("/api/checkpoint/:code", handle(async (req) => {
   const cp = await checkpointByCode(req.params.code);
-  if (!cp) { const e = new Error("Checkpoint not found"); e.status = 404; throw e; }
+  if (!cp) {
+    // A factory-written tag that nobody claimed yet: scanning it starts the
+    // create-your-clinic flow instead of erroring.
+    const tag = await db.get(
+      "SELECT * FROM provisioned_tags WHERE code = ? AND organization_id IS NULL",
+      String(req.params.code || "").trim()
+    );
+    if (tag) return { unclaimed: true };
+    const e = new Error("Checkpoint not found"); e.status = 404; throw e;
+  }
   const ch = await createChallenge(cp);
   return {
     challenge: ch.token, expires_in: ch.expires_in,
@@ -110,14 +123,14 @@ app.post("/api/checkpoint/consume", requireAuth, handle(async (req) => {
   const { challenge, action, geo } = req.body || {};
   const cp = await consumeChallenge(challenge, req.user);
   if (!cp) { const e = new Error("This code has expired — tap or scan again"); e.status = 410; throw e; }
-  const { known } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
+  const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
   if (action === "clock-out") {
     return { today: await clockOut(req.user, { method: cp.type, locationId: cp.location_id }) };
   }
   return {
     today: await clockIn(req.user, {
       method: cp.type, locationId: cp.location_id, geo: geo || null,
-      viaCheckpoint: true, deviceKnown: known,
+      viaCheckpoint: true, deviceKnown: known, deviceId,
     }),
   };
 }));
@@ -150,9 +163,9 @@ app.post("/api/checkpoint/pin", handle(async (req) => {
 
   const cp = await consumeChallenge(challenge, user);
   if (!cp) { const e = new Error("This code has expired — tap the tag again"); e.status = 410; throw e; }
-  const { known } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
+  const { known, deviceId } = await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
   const result = await tapToggle(user, {
-    method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known,
+    method: cp.type, locationId: cp.location_id, geo: geo || null, deviceKnown: known, deviceId,
   });
   return { user: { first_name: user.first_name }, ...result };
 }));
@@ -295,6 +308,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
       worked_min: d.worked_min,
       sessions: d.sessions.map((s) => ({
         in: s.clock_in, out: s.clock_out, method: s.clock_in_method,
+        device_id: s.device_id || null,
         minutes: s.clock_out ? s.worked_minutes : null,
       })),
     });

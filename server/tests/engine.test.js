@@ -242,6 +242,44 @@ test("signup provisions org + admin + checkpoint; quick-add members scan without
   assert.equal(r.today.status, "working");
 });
 
+test("pre-written tag: claim binds org, wrong/duplicate claims rejected, scans record the device", async () => {
+  const { claimTag, makeClaimCode, quickAddMember } = await import("../domains/org.js");
+  const { touchDevice } = await import("../auth.js");
+  const claim = makeClaimCode();
+  await db.run(
+    "INSERT INTO provisioned_tags (claim_code, code, created_at) VALUES (?, 'tag-abc-123', ?)",
+    claim, new Date().toISOString()
+  );
+
+  // Wrong setup code rejected.
+  await assert.rejects(claimTag({
+    tag_code: "tag-abc-123", claim_code: "XXXX-XXXX",
+    clinic_name: "Boxed Clinic", first_name: "B", last_name: "Ox", email: "box@t.test", password: "secret1",
+  }), /doesn't match/);
+
+  // Correct claim provisions the org and binds the tag's code as checkpoint.
+  const s = await claimTag({
+    tag_code: "tag-abc-123", claim_code: claim.toLowerCase(),
+    clinic_name: "Boxed Clinic", first_name: "B", last_name: "Ox", email: "box@t.test", password: "secret1",
+  });
+  const cp = await db.get("SELECT * FROM attendance_checkpoints WHERE code = 'tag-abc-123'");
+  assert.equal(cp.organization_id, s.user.organization_id);
+
+  // Second claim of the same tag rejected.
+  await assert.rejects(claimTag({
+    tag_code: "tag-abc-123", claim_code: claim,
+    clinic_name: "X", first_name: "A", last_name: "B", email: "x2@t.test", password: "secret1",
+  }), /already linked/);
+
+  // A member's scan records WHICH device checked in.
+  const m = await quickAddMember(s.user, { first_name: "Devi", last_name: "Ce" });
+  const member = await user(m.id);
+  const { deviceId } = await touchDevice(member.id, "device-token-of-devi-phone-1", "test-agent");
+  assert.ok(deviceId, "device registered");
+  const r = await tapToggle(member, { method: "NFC", deviceId });
+  assert.equal(r.today.attendance.device_id, deviceId);
+});
+
 // ---------------------------------------------------------------- corrections audit
 test("approved corrections update attendance and leave an audit trail", async () => {
   const corrId = await requestCorrection(await user(empA), {

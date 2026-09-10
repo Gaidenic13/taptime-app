@@ -45,6 +45,7 @@ function EntriesModal({ employee, onClose }) {
               {(d.sessions || []).map((s, i) => (
                 <span key={i} className={`pill ${s.clock_out ? "no_shift" : "working"}`}>
                   {fmtTime(s.clock_in)} → {s.clock_out ? fmtTime(s.clock_out) : "…"}
+                  {s.device_id ? ` · #${s.device_id}` : ""}
                 </span>
               ))}
               {d.worked_min > 0 && <strong>{fmtMin(d.worked_min)}</strong>}

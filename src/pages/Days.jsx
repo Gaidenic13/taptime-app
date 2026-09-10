@@ -78,6 +78,7 @@ export default function Days() {
                       <span key={i} className={`pill ${s.out ? "no_shift" : "working"}`}>
                         {fmtTime(s.in)} → {s.out ? fmtTime(s.out) : "…"}
                         {s.method && s.method !== "WEB" ? ` · ${s.method}` : ""}
+                        {s.device_id ? ` · ${t("days.device")} #${s.device_id}` : ""}
                       </span>
                     ))}
                     {r.sessions.length === 0 && "—"}

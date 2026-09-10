@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS attendance (
   overtime_minutes INTEGER,
   risk_level TEXT NOT NULL DEFAULT 'low',
   risk_signals TEXT DEFAULT '[]',
+  device_id INTEGER,                 -- which phone/browser made the check-in
   created_at TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT ''
 );
@@ -140,6 +141,18 @@ CREATE TABLE IF NOT EXISTS breaks (
   attendance_id INTEGER NOT NULL REFERENCES attendance(id),
   start TEXT NOT NULL,
   ended_at TEXT
+);
+
+-- Factory-provisioned tags: written before shipping, claimed by the clinic
+-- with the setup code from the box. Scanning an unclaimed tag opens the
+-- create-your-clinic flow; claiming binds the tag's code to the new org.
+CREATE TABLE IF NOT EXISTS provisioned_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  claim_code TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL UNIQUE,
+  organization_id INTEGER REFERENCES organizations(id),
+  created_at TEXT NOT NULL,
+  claimed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attendance_checkpoints (

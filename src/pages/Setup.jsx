@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import QRCode from "qrcode";
 import { api, fmtTime } from "../api.js";
 import { useI18n } from "../i18n.jsx";
@@ -16,6 +16,8 @@ function QrImg({ url }) {
 export default function Setup() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  // Arrived via a pre-written tag claim: the write-the-tag step is already done.
+  const tagReady = new URLSearchParams(useLocation().search).get("tag") === "ready";
   const [step, setStep] = useState(0);
   const [members, setMembers] = useState([]);
   const [checkpoint, setCheckpoint] = useState(null);
@@ -127,7 +129,8 @@ export default function Setup() {
       {step === 1 && checkpoint && (
         <div className="card">
           <h2>{t("setup.s2")}</h2>
-          <p className="small muted">{t("setup.s2Sub")}</p>
+          <p className="small muted">{tagReady ? t("setup.tagReady") : t("setup.s2Sub")}</p>
+          {tagReady && <div className="ok-box">{t("setup.tagReady").split("—")[0].trim()} ✓</div>}
           <div className="row" style={{ marginTop: 12, alignItems: "flex-start" }}>
             <QrImg url={url} />
             <div style={{ flex: 1, minWidth: 220 }}>
@@ -135,12 +138,14 @@ export default function Setup() {
                 {url}
               </div>
               <button className="btn small" onClick={copy}>{copied ? t("setup.copied") : t("setup.copy")}</button>
-              <ol className="small muted" style={{ paddingLeft: 18, marginTop: 12, lineHeight: 1.7 }}>
-                <li>{t("setup.nfc1")}</li>
-                <li>{t("setup.nfc2")}</li>
-                <li>{t("setup.nfc3")}</li>
-                <li>{t("setup.nfc4")}</li>
-              </ol>
+              {!tagReady && (
+                <ol className="small muted" style={{ paddingLeft: 18, marginTop: 12, lineHeight: 1.7 }}>
+                  <li>{t("setup.nfc1")}</li>
+                  <li>{t("setup.nfc2")}</li>
+                  <li>{t("setup.nfc3")}</li>
+                  <li>{t("setup.nfc4")}</li>
+                </ol>
+              )}
             </div>
           </div>
         </div>
