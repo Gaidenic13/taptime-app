@@ -1,7 +1,60 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, fmtMin, fmtTime, fmtDate, fmtMonth } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n } from "../i18n.jsx";
+
+const monthStr = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const shiftMonth = (month, delta) => {
+  const [y, m] = month.split("-").map(Number);
+  return monthStr(new Date(y, m - 1 + delta, 1));
+};
+
+// All entries (check-in/out sessions) of one person, month by month.
+function EntriesModal({ employee, onClose }) {
+  const { t } = useI18n();
+  const [month, setMonth] = useState(monthStr());
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    api(`/attendance/history?user_id=${employee.id}&month=${month}`).then(setData);
+  }, [employee.id, month]);
+
+  const days = (data?.days || []).filter((d) => d.sessions?.length || d.leave);
+  const total = days.reduce((s, d) => s + (d.worked_min || 0), 0);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="card modal-card" onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)" }}>
+        <div className="spread">
+          <h2>{t("emp.entriesOf", { name: `${employee.first_name} ${employee.last_name}` })}</h2>
+          <button className="btn subtle small" onClick={onClose}>✕</button>
+        </div>
+        <div className="row" style={{ marginBottom: 10 }}>
+          <button className="btn subtle small" onClick={() => setMonth(shiftMonth(month, -1))}>←</button>
+          <strong>{fmtMonth(month)}</strong>
+          <button className="btn subtle small" onClick={() => setMonth(shiftMonth(month, 1))}>→</button>
+          <span className="pill working">{t("att.workedMonth")}: {fmtMin(total)}</span>
+        </div>
+        {days.length === 0 && <div className="empty">{t("emp.noEntries")}</div>}
+        {days.map((d) => (
+          <div className="list-item spread" key={d.date}>
+            <strong>{fmtDate(d.date)}</strong>
+            <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+              {d.leave && <span className="pill leave">{t(`leave.${d.leave.type}`)}</span>}
+              {(d.sessions || []).map((s, i) => (
+                <span key={i} className={`pill ${s.clock_out ? "no_shift" : "working"}`}>
+                  {fmtTime(s.clock_in)} → {s.clock_out ? fmtTime(s.clock_out) : "…"}
+                </span>
+              ))}
+              {d.worked_min > 0 && <strong>{fmtMin(d.worked_min)}</strong>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function EmployeeModal({ employee, directory, onClose, onDone }) {
   const { t } = useI18n();
@@ -116,12 +169,30 @@ export default function Employees() {
   const [employees, setEmployees] = useState([]);
   const [directory, setDirectory] = useState(null);
   const [modal, setModal] = useState(undefined);
+  const [entriesFor, setEntriesFor] = useState(null);
+  const [qFirst, setQFirst] = useState("");
+  const [qLast, setQLast] = useState("");
+  const [justAdded, setJustAdded] = useState(null);
+  const [error, setError] = useState("");
 
   const load = () => api("/employees").then((d) => setEmployees(d.employees));
   useEffect(() => {
     load();
     api("/directory").then(setDirectory);
   }, []);
+
+  const quickAdd = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      const d = await api("/employees/quick", { method: "POST", body: { first_name: qFirst, last_name: qLast } });
+      setJustAdded({ name: `${qFirst} ${qLast}`.trim(), pin: d.pin });
+      setQFirst(""); setQLast("");
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const toggleActive = async (emp) => {
     await api(`/employees/${emp.id}`, { method: "PATCH", body: { active: emp.active ? 0 : 1 } });
@@ -135,8 +206,22 @@ export default function Employees() {
           <h1>{t("emp.title")}</h1>
           <p>{t("emp.active", { n: employees.filter((e) => e.active).length })}</p>
         </div>
-        {isAdmin && directory && <button className="btn" onClick={() => setModal(null)}>+ {t("emp.add")}</button>}
+        {isAdmin && directory && <button className="btn ghost" onClick={() => setModal(null)}>{t("emp.fullAdd")}</button>}
       </div>
+
+      {isAdmin && (
+        <div className="card">
+          <h2>{t("emp.add")}</h2>
+          <p className="small muted">{t("emp.quickAdd")}</p>
+          <form className="row" onSubmit={quickAdd} style={{ marginTop: 8 }}>
+            <input value={qFirst} onChange={(e) => setQFirst(e.target.value)} placeholder={t("emp.first")} required style={{ flex: 1, minWidth: 120 }} />
+            <input value={qLast} onChange={(e) => setQLast(e.target.value)} placeholder={t("emp.last")} style={{ flex: 1, minWidth: 120 }} />
+            <button className="btn">{t("setup.addBtn")}</button>
+          </form>
+          {error && <div className="error-box">{error}</div>}
+          {justAdded && <div className="ok-box">{justAdded.name} — PIN <strong>{justAdded.pin}</strong></div>}
+        </div>
+      )}
 
       <div className="card table-wrap">
         <table>
@@ -144,7 +229,7 @@ export default function Employees() {
             <tr>
               <th>{t("common.name")}</th><th>{t("emp.jobRole")}</th><th>{t("emp.department")}</th>
               <th>{t("common.location")}</th><th>{t("common.email")}</th><th>{t("emp.leaveLeft")}</th>
-              <th>{t("emp.access")}</th>{isAdmin && <th></th>}
+              <th>{t("emp.access")}</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -157,16 +242,19 @@ export default function Employees() {
                 <td className="small">{e.email}</td>
                 <td>{e.leave_balance}d</td>
                 <td><span className={`pill ${e.role === "employee" ? "no_shift" : "leave"}`}>{e.role}</span></td>
-                {isAdmin && (
-                  <td>
-                    <div className="row">
-                      <button className="btn subtle small" onClick={() => setModal(e)}>{t("common.edit")}</button>
-                      <button className="btn ghost small" onClick={() => toggleActive(e)}>
-                        {e.active ? t("emp.deactivate") : t("emp.reactivate")}
-                      </button>
-                    </div>
-                  </td>
-                )}
+                <td>
+                  <div className="row">
+                    <button className="btn subtle small" onClick={() => setEntriesFor(e)}>{t("emp.entries")}</button>
+                    {isAdmin && (
+                      <>
+                        <button className="btn subtle small" onClick={() => setModal(e)}>{t("common.edit")}</button>
+                        <button className="btn ghost small" onClick={() => toggleActive(e)}>
+                          {e.active ? t("emp.deactivate") : t("emp.reactivate")}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -181,6 +269,7 @@ export default function Employees() {
           onDone={() => { setModal(undefined); load(); }}
         />
       )}
+      {entriesFor && <EntriesModal employee={entriesFor} onClose={() => setEntriesFor(null)} />}
     </>
   );
 }
