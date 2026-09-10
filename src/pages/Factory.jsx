@@ -155,6 +155,15 @@ function FactoryInner() {
                 ? <span className="pill working">{tg.clinic}{tg.entrance ? ` · ${tg.entrance}` : ""}</span>
                 : <span className="pill pending">{t("factory.unclaimed")}</span>}
               <CopyBtn text={urlFor(tg.code)} />
+              {!tg.clinic && (
+                <button className="btn ghost small"
+                  onClick={async () => {
+                    try { await factoryApi(`/tags/${tg.id}`, { method: "DELETE" }); load(); }
+                    catch (e) { setError(e.message); }
+                  }}>
+                  {t("common.remove")}
+                </button>
+              )}
             </div>
           </div>
         ))}

@@ -87,6 +87,16 @@ app.get("/api/factory/tags", requireFactory, handle(async () => ({
   `),
 })));
 
+// Only UNCLAIMED tags can be deleted — a claimed tag is a live entrance of a
+// real clinic and must never disappear from under it.
+app.delete("/api/factory/tags/:id", requireFactory, handle(async (req) => {
+  const tag = await db.get("SELECT * FROM provisioned_tags WHERE id = ?", req.params.id);
+  if (!tag) throw new Error("Tag not found");
+  if (tag.organization_id) throw new Error("This tag is claimed by a clinic — it cannot be deleted");
+  await db.run("DELETE FROM provisioned_tags WHERE id = ?", tag.id);
+  return { ok: true };
+}));
+
 // ---------------------------------------------------------------- signup (self-serve)
 app.post("/api/orgs/signup", handle(async (req) => createOrganization(req.body || {})));
 
