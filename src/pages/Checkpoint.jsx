@@ -161,7 +161,13 @@ export default function Checkpoint() {
   const [busy, setBusy] = useState(false);
   const [pin, setPin] = useState("");
   const [unclaimed, setUnclaimed] = useState(false);
-  const [joining, setJoining] = useState(false); // "New here? Create your account"
+  // Fresh phone: "choose" (first time here?) → "pin" (existing member) or
+  // "join" (create account). "Not me" / wrong-clinic go straight to "pin".
+  const [mode, setMode] = useState(() => {
+    try { const m = sessionStorage.getItem("tt_cp_mode"); sessionStorage.removeItem("tt_cp_mode"); return m || "choose"; }
+    catch { return "choose"; }
+  });
+  const [unknownPin, setUnknownPin] = useState(""); // code typed that matched nobody
   const [join, setJoin] = useState({ first_name: "", last_name: "", pin: "" });
   const [joined, setJoined] = useState(null); // first name after a join request
   const autoFired = useRef(false);
@@ -276,7 +282,10 @@ export default function Checkpoint() {
       if (d.token) setToken(d.token); // link this phone
       showResult(d, { activated: true });
     } catch (e) {
-      setError(e.status === 403 ? t("cp.rejected") : e.message);
+      // Nobody has this code: it's most likely a newcomer who typed the code
+      // they'd like — offer to create the account with it, not a dead end.
+      if (e.status === 401) { setUnknownPin(fullPin); setError(t("cp.unknownPin")); }
+      else setError(e.status === 403 ? t("cp.rejected") : e.message);
       if (e.status === 410) fetchChallenge();
     } finally {
       setPin("");
@@ -307,9 +316,18 @@ export default function Checkpoint() {
     }
   };
 
-  const notMe = () => {
+  // Unlink this phone: the session cookie is HttpOnly, so the server has to
+  // clear it too — otherwise the reload silently logs the same person back in.
+  const notMe = async () => {
+    try { await api("/auth/logout", { method: "POST" }); } catch {}
     setToken(null);
+    try { sessionStorage.setItem("tt_cp_mode", "pin"); } catch {}
     window.location.reload();
+  };
+
+  const startJoin = (withPin = "") => {
+    setJoin((j) => ({ ...j, pin: withPin || j.pin }));
+    setUnknownPin(""); setError(""); setMode("join");
   };
 
   const s = today?.status;
@@ -407,8 +425,20 @@ export default function Checkpoint() {
           </>
         )}
 
-        {/* -------- no session yet: enter your code, or create your account -------- */}
-        {!result && !joined && !user && checkpoint && !joining && (
+        {/* -------- fresh phone: first time here, or already a member? -------- */}
+        {!result && !joined && !user && checkpoint && mode === "choose" && (
+          <>
+            <h2 style={{ marginTop: 4 }}>{t("cp.chooseTitle")}</h2>
+            <p className="muted small" style={{ marginBottom: 18 }}>{t("cp.chooseSub", { clinic: checkpoint.clinic })}</p>
+            <button className="btn big" onClick={() => startJoin()}>{t("cp.chooseNew")}</button>
+            <button className="btn ghost big" style={{ marginTop: 10 }} onClick={() => { setError(""); setMode("pin"); }}>
+              {t("cp.chooseHave")}
+            </button>
+          </>
+        )}
+
+        {/* -------- existing member on a new phone: enter your code -------- */}
+        {!result && !joined && !user && checkpoint && mode === "pin" && (
           <>
             <p className="muted" style={{ marginBottom: 2 }}>{t("cp.enterPin")}</p>
             <p className="small muted">{t("cp.pinSub")}</p>
@@ -423,13 +453,19 @@ export default function Checkpoint() {
               <button disabled={busy} onClick={() => press("0")}>0</button>
               <button disabled={busy} onClick={() => setPin(pin.slice(0, -1))}>⌫</button>
             </div>
-            <button className="btn ghost big" style={{ marginTop: 14 }} onClick={() => setJoining(true)}>
-              {t("cp.newHere")}
-            </button>
+            {unknownPin ? (
+              <button className="btn big" style={{ marginTop: 14 }} onClick={() => startJoin(unknownPin)}>
+                {t("cp.createWithPin", { pin: unknownPin })}
+              </button>
+            ) : (
+              <button className="btn ghost big" style={{ marginTop: 14 }} onClick={() => startJoin()}>
+                {t("cp.newHere")}
+              </button>
+            )}
           </>
         )}
 
-        {!result && !joined && !user && checkpoint && joining && (
+        {!result && !joined && !user && checkpoint && mode === "join" && (
           <form onSubmit={submitJoin} style={{ textAlign: "left", marginTop: 8 }}>
             <h2 style={{ textAlign: "center" }}>{t("cp.joinTitle")}</h2>
             <p className="muted small" style={{ textAlign: "center" }}>{t("cp.joinSub")}</p>
@@ -450,7 +486,7 @@ export default function Checkpoint() {
             {error && <div className="error-box">{error}</div>}
             <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.joinBtn")}</button>
             <p className="small muted" style={{ textAlign: "center", marginTop: 12 }}>
-              <a href="#code" onClick={(e) => { e.preventDefault(); setJoining(false); setError(""); }}>{t("cp.haveCode")}</a>
+              <a href="#code" onClick={(e) => { e.preventDefault(); setMode("pin"); setError(""); }}>{t("cp.haveCode")}</a>
             </p>
           </form>
         )}
