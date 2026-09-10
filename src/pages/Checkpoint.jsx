@@ -16,6 +16,7 @@ function ClaimForm({ code }) {
   const navigate = useNavigate();
   const adminSession = user && (user.role === "admin" || user.role === "owner");
   const [mode, setMode] = useState("new"); // new | existing
+  const [forceNew, setForceNew] = useState(false); // admin chose "different clinic"
   const [form, setForm] = useState({ clinic_name: "", first_name: "", last_name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -62,14 +63,19 @@ function ClaimForm({ code }) {
     );
   }
 
-  // Admin already signed in on this phone: nothing to type — one confirm tap.
-  if (adminSession) {
+  // Admin already signed in on this phone: one tap to add an entrance — but
+  // creating a separate new clinic stays one click away.
+  if (adminSession && !forceNew) {
     return (
       <form onSubmit={submitAttach} style={{ marginTop: 8 }}>
         <h2>{t("cp.claimExisting")}</h2>
         <p className="muted small">{t("cp.attachSub")}</p>
         {error && <div className="error-box">{error}</div>}
         <button className="btn big" disabled={busy}>{busy ? t("cp.recording") : t("cp.attachBtn")}</button>
+        <button type="button" className="btn ghost big" style={{ marginTop: 10 }}
+          onClick={() => setForceNew(true)}>
+          {t("cp.newInstead")}
+        </button>
       </form>
     );
   }
@@ -78,12 +84,20 @@ function ClaimForm({ code }) {
     <form onSubmit={mode === "new" ? submitNew : submitAttach} style={{ textAlign: "left", marginTop: 8 }}>
       <h2 style={{ textAlign: "center" }}>{t("cp.claimTitle")}</h2>
       <p className="muted small" style={{ textAlign: "center" }}>{t("cp.claimSub")}</p>
-      <div className="seg" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-        <button type="button" className={mode === "new" ? "active" : ""} style={{ flex: 1 }}
-          onClick={() => setMode("new")}>{t("cp.claimNew")}</button>
-        <button type="button" className={mode === "existing" ? "active" : ""} style={{ flex: 1 }}
-          onClick={() => setMode("existing")}>{t("cp.claimExisting")}</button>
-      </div>
+      {adminSession ? (
+        <p className="small muted" style={{ textAlign: "center" }}>
+          <a href="#attach" onClick={(e) => { e.preventDefault(); setForceNew(false); }}>
+            ← {t("cp.claimExisting")}
+          </a>
+        </p>
+      ) : (
+        <div className="seg" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <button type="button" className={mode === "new" ? "active" : ""} style={{ flex: 1 }}
+            onClick={() => setMode("new")}>{t("cp.claimNew")}</button>
+          <button type="button" className={mode === "existing" ? "active" : ""} style={{ flex: 1 }}
+            onClick={() => setMode("existing")}>{t("cp.claimExisting")}</button>
+        </div>
+      )}
       {mode === "new" && (
         <>
           <label className="field"><span>{t("signup.clinic")}</span>
