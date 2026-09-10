@@ -18,6 +18,7 @@ const { createShift, validateShift } = await import("../domains/scheduling.js");
 const { createChallenge, consumeChallenge, checkpointByCode } = await import("../domains/checkpoints.js");
 const { requestLeave, decide, pendingApprovals, requestCorrection } = await import("../domains/requests.js");
 const { setSetting } = await import("../settings.js");
+const { todayStr } = await import("../time.js");
 
 let orgA, orgB, empA, empA2, mgrA, empB, locA, roleA;
 
@@ -371,6 +372,72 @@ test("trusted phone: every link is admin-approved and only that phone scans", as
   await assert.rejects(decidePhoneLink({ ...outsider, role: "admin" }, swap2.id, "approved"), /not found/);
   await unlinkPhone(admin, nou.id);
   assert.equal((await user(nou.id)).trusted_device_id, null);
+});
+
+// ---------------------------------------------------------------- forgotten clock-outs
+test("forgotten clock-out: auto-closed with zero credit, then fixed by the manager or a correction", async () => {
+  const { sweepOpenSessions, setClockOut, rejectMissingOut, missingFor, pendingMissing, forgotCounts } =
+    await import("../domains/missing.js");
+  const forgetful = await insert(`
+    INSERT INTO users (organization_id, first_name, last_name, email, password_hash, role, job_role_id, location_id)
+    VALUES (?, 'For', 'Getful', 'forget@a.test', 'x:x', 'employee', ?, ?)
+  `, orgA, roleA, locA);
+  await clockIn(await user(forgetful), { deviceKnown: true });
+  // Nothing to do while the session is still believable.
+  assert.equal(await sweepOpenSessions(orgA), 0);
+  // Pretend they clocked in yesterday at 08:00 and never tapped out.
+  const yesterday8 = new Date(); yesterday8.setDate(yesterday8.getDate() - 1); yesterday8.setHours(8, 0, 0, 0);
+  await db.run("UPDATE attendance SET clock_in = ?, date = ? WHERE user_id = ? AND clock_out IS NULL",
+    yesterday8.toISOString(), todayStr(yesterday8), forgetful);
+  assert.equal(await sweepOpenSessions(orgA), 1);
+  const closed = await db.get("SELECT * FROM attendance WHERE user_id = ?", forgetful);
+  assert.equal(closed.status, "missing_out");
+  assert.equal(closed.clock_out_method, "AUTO");
+  assert.equal(closed.worked_minutes, 0, "a forgotten clock-out earns nothing on its own");
+  assert.ok(closed.clock_out, "the session is closed, so a new day can start");
+  assert.equal((await missingFor(forgetful)).length, 1);
+  assert.ok((await pendingMissing(orgA)).some((m) => m.id === closed.id));
+  assert.equal((await sweepOpenSessions(orgA)), 0, "idempotent");
+
+  // Manager sets the real leaving time → hours credited, origin kept.
+  const outTime = "16:00";
+  const fixed = await setClockOut(await user(mgrA), closed.id, outTime);
+  assert.equal(fixed.worked_minutes, 8 * 60);
+  const row = await db.get("SELECT * FROM attendance WHERE id = ?", closed.id);
+  assert.equal(row.status, "corrected");
+  assert.equal(row.clock_out_method, "AUTO_FIXED");
+  assert.equal((await forgotCounts(orgA, closed.date.slice(0, 7)))[forgetful], 1, "still counts as forgotten");
+  await assert.rejects(setClockOut(await user(mgrA), closed.id, "23:59"), /already has a clock-out/);
+  const outsider = await db.get("SELECT * FROM users WHERE email = 'e@b.test'");
+  await assert.rejects(setClockOut({ ...outsider, role: "manager" }, closed.id, outTime), /not found/);
+
+  // Second forgotten day: the member asks "I left at", the manager approves
+  // the correction → credited; a third one is rejected → stays at zero.
+  for (const daysAgo of [3, 5]) {
+    const t0 = new Date(Date.now() - daysAgo * 86400000); t0.setHours(8, 0, 0, 0);
+    await db.run(`
+      INSERT INTO attendance (organization_id, user_id, date, clock_in, clock_in_method, location_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'NFC', ?, 'working', ?, ?)
+    `, orgA, forgetful, todayStr(t0), t0.toISOString(), locA, t0.toISOString(), t0.toISOString());
+    assert.equal(await sweepOpenSessions(orgA), 1); // one open session per person at a time
+  }
+  const [d3, d5] = await db.all(
+    "SELECT * FROM attendance WHERE user_id = ? AND status = 'missing_out' ORDER BY date DESC", forgetful
+  );
+  const corrId = await requestCorrection(await user(forgetful), {
+    date: d3.date, kind: "missing_out", requested_in: "", requested_out: "16:30", reason: "forgot to tap",
+  });
+  assert.equal((await missingFor(forgetful)).find((m) => m.id === d3.id).correction_pending, true);
+  await decide(await user(mgrA), "correction", corrId, "approved");
+  const d3fixed = await db.get("SELECT * FROM attendance WHERE id = ?", d3.id);
+  assert.equal(d3fixed.status, "corrected");
+  assert.equal(d3fixed.worked_minutes, 8 * 60 + 30);
+  assert.equal(d3fixed.clock_out_method, "AUTO_FIXED");
+  await rejectMissingOut(await user(mgrA), d5.id);
+  const d5row = await db.get("SELECT * FROM attendance WHERE id = ?", d5.id);
+  assert.equal(d5row.status, "rejected");
+  assert.equal(d5row.worked_minutes, 0);
+  assert.equal((await missingFor(forgetful)).length, 0);
 });
 
 // ---------------------------------------------------------------- corrections audit

@@ -75,8 +75,8 @@ export default function Days() {
                 <td>
                   <div className="row" style={{ gap: 6 }}>
                     {r.sessions.map((s, i) => (
-                      <span key={i} className={`pill ${s.out ? "no_shift" : "working"}`}>
-                        {fmtTime(s.in)} → {s.out ? fmtTime(s.out) : "…"}
+                      <span key={i} className={`pill ${s.status === "missing_out" ? "rejected" : s.out ? "no_shift" : "working"}`}>
+                        {fmtTime(s.in)} → {s.status === "missing_out" ? `? · ${t("miss.short")}` : s.out ? fmtTime(s.out) : "…"}
                         {s.entrance ? ` · ${s.entrance}` : s.method && s.method !== "WEB" ? ` · ${s.method}` : ""}
                         {s.device_id ? ` · ${t("days.device")} #${s.device_id}` : ""}
                       </span>

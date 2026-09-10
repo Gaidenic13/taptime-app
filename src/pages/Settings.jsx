@@ -37,6 +37,11 @@ function Rules() {
       {notice && <div className="ok-box">{notice}</div>}
       <div className="grid2" style={{ marginTop: 8 }}>
         {num("daily_goal_hours", "set.dailyGoal")}
+        {num("max_session_hours", "set.maxSession")}
+        <label className="field"><span>{t("set.closing")}</span>
+          <input type="time" defaultValue={settings.closing_time || ""}
+            onBlur={(e) => e.target.value !== (settings.closing_time || "") && save({ closing_time: e.target.value })} />
+        </label>
         {num("clock_in_early_min", "set.earlyIn")}
         {num("late_grace_min", "set.grace")}
         {num("clock_in_late_flag_min", "set.lateFlag")}

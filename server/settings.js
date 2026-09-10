@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS = {
   break_max_min: 90,           // breaks longer than this get flagged
   onboarded: false,            // out-of-the-box wizard completed
   daily_goal_hours: 8,         // the progress bar members fill up each day
+  max_session_hours: 12,       // an open session past this is closed with 0 credit (forgotten clock-out)
+  closing_time: "",            // optional "HH:MM": open sessions are closed at closing, uncredited
 };
 
 export async function getSettings(orgId) {

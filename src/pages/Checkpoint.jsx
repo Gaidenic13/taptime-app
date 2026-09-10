@@ -5,6 +5,7 @@ import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
 import Clock from "../components/Clock.jsx";
 import DayProgress from "../components/DayProgress.jsx";
+import MissingOut from "../components/MissingOut.jsx";
 
 // The scan page — the only thing employees ever touch.
 //  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
@@ -141,10 +142,19 @@ function DayHistory({ sessions = [], worked = 0 }) {
         <div className="history-row" key={s.id}>
           <span>{fmtTime(s.clock_in)}</span>
           <span className="history-arrow">→</span>
-          <span className={s.clock_out ? "" : "muted"}>{s.clock_out ? fmtTime(s.clock_out) : "…"}</span>
-          <span className="history-dur muted">
-            {s.clock_out ? fmtMin(s.worked_minutes ?? 0) : t("status.working")}
-          </span>
+          {s.status === "missing_out" ? (
+            <>
+              <span style={{ color: "var(--red)" }}>?</span>
+              <span className="history-dur" style={{ color: "var(--red)", fontWeight: 600 }}>{t("miss.short")}</span>
+            </>
+          ) : (
+            <>
+              <span className={s.clock_out ? "" : "muted"}>{s.clock_out ? fmtTime(s.clock_out) : "…"}</span>
+              <span className="history-dur muted">
+                {s.clock_out ? fmtMin(s.worked_minutes ?? 0) : t("status.working")}
+              </span>
+            </>
+          )}
         </div>
       ))}
       <div className="history-total">{t("cp.workedToday", { dur: fmtMin(worked) })}</div>
@@ -167,6 +177,7 @@ export default function Checkpoint() {
   const [checkpoint, setCheckpoint] = useState(null);
   const [today, setToday] = useState(null);
   const [goalMin, setGoalMin] = useState(480);
+  const [missing, setMissing] = useState([]);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null); // { name, did, time, worked, review }
   const [busy, setBusy] = useState(false);
@@ -206,7 +217,7 @@ export default function Checkpoint() {
 
   useEffect(() => { fetchChallenge(); }, [code]);
   useEffect(() => {
-    if (user) api("/me").then((d) => { setToday(d.today); if (d.goal_min) setGoalMin(d.goal_min); }).catch(() => {});
+    if (user) loadMe();
   }, [user]);
 
   // A member session on this phone without a reload: keeps FRESH_SCAN true,
@@ -250,6 +261,11 @@ export default function Checkpoint() {
       setBusy(false);
     }
   };
+
+  const loadMe = () => api("/me").then((d) => {
+    setToday(d.today); setMissing(d.missing || []);
+    if (d.goal_min) setGoalMin(d.goal_min);
+  }).catch(() => {});
 
   const showResult = (d, extra = {}) => {
     const att = d.today.attendance;
@@ -370,6 +386,7 @@ export default function Checkpoint() {
               <Clock />
               <DayProgress sessions={result.sessions} goalMin={goalMin} />
             </div>
+            <MissingOut missing={missing} onChange={loadMe} />
             <DayHistory sessions={result.sessions} worked={result.worked} />
             {result.review && <p className="small muted">{t("cp.reviewNote")}</p>}
             {/* Never a Clock out button here: this page's scan was just used. */}
@@ -404,6 +421,7 @@ export default function Checkpoint() {
           return (
             <>
               <h2 style={{ marginTop: 6 }}>{t("cp.hi", { name: user.first_name })}</h2>
+              <MissingOut missing={missing} onChange={loadMe} />
               <div className="clock-hero">
                 <span className={`pill ${open ? today.status : "no_shift"}`}>{t(open ? `status.${today.status}` : "cp.stopped")}</span>
                 <Clock />

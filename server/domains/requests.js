@@ -3,7 +3,7 @@ import { db, insert } from "../db.js";
 import { audit } from "../audit.js";
 import { notify } from "./notifications.js";
 import { leaveImpact } from "./staffing.js";
-import { businessDays, dateTimeIso, nowIso } from "../time.js";
+import { businessDays, dateTimeIso, nowIso, minutesBetween, breakMinutes } from "../time.js";
 
 export const LEAVE_DEDUCTIBLE = new Set(["annual", "personal"]);
 
@@ -86,8 +86,10 @@ export async function pendingApprovals(orgId) {
   `, orgId);
 
   const { pendingLinks } = await import("./phones.js");
+  const { pendingMissing } = await import("./missing.js");
   return {
     links: await pendingLinks(orgId),
+    missing: await pendingMissing(orgId),
     leaves,
     corrections: await join("corrections"),
     overtime: await join("overtime"),
@@ -172,6 +174,16 @@ async function applyCorrection(c, reviewer, corr) {
       vals.push(dateTimeIso(corr.date, corr.requested_out));
     }
     await c.run(`UPDATE attendance SET ${sets.join(", ")} WHERE id = ?`, ...vals, att.id);
+    // Both bounds known now → the credited minutes must follow (a corrected
+    // forgotten clock-out goes from 0 to the real duration).
+    const fixed = await c.get("SELECT * FROM attendance WHERE id = ?", att.id);
+    if (fixed.clock_in && fixed.clock_out) {
+      const breaks = await c.all("SELECT * FROM breaks WHERE attendance_id = ?", att.id);
+      const brMin = breakMinutes(breaks, fixed.clock_out);
+      const worked = Math.max(0, minutesBetween(fixed.clock_in, fixed.clock_out) - brMin);
+      await c.run("UPDATE attendance SET worked_minutes = ?, break_minutes = ?, clock_out_method = ? WHERE id = ?",
+        worked, brMin, att.clock_out_method === "AUTO" ? "AUTO_FIXED" : fixed.clock_out_method, att.id);
+    }
   }
 
   await audit({

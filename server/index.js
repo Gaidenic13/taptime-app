@@ -25,6 +25,9 @@ import {
 import {
   joinClinic, requestPhoneLink, linkStatus, phoneStatus, resumeOnTrustedPhone, decidePhoneLink, unlinkPhone, isTrustedPhone, pendingLinks,
 } from "./domains/phones.js";
+import {
+  sweepOpenSessions, sweepAll, setClockOut, rejectMissingOut, missingFor, stillIn, forgotCounts,
+} from "./domains/missing.js";
 import crypto from "crypto";
 import { attendanceReport, leaveReport, staffingReport } from "./domains/reports.js";
 import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time.js";
@@ -146,6 +149,7 @@ app.post("/api/auth/logout", requireAuth, handle(async (req, res) => {
 
 app.get("/api/me", requireAuth, handle(async (req) => {
   await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
+  await sweepOpenSessions(req.orgId);
   const user = await publicUser(req.user);
   user.phone_linked = !!req.user.trusted_device_id;
   user.this_phone_trusted = await isTrustedPhone(req.user, req.deviceToken);
@@ -154,6 +158,7 @@ app.get("/api/me", requireAuth, handle(async (req) => {
     user,
     token: req.token, // lets a cookie-recognized phone restore its storage token
     goal_min: Math.round(Number((await getSettings(req.orgId)).daily_goal_hours || 0) * 60),
+    missing: req.user.role === "employee" ? await missingFor(req.user.id) : [],
     today: await dayStatus(req.user.id, todayStr()),
     unread_notifications: await unreadCount(req.user.id),
   };
@@ -291,6 +296,7 @@ app.post("/api/checkpoint/tap", requireAuth, handle(async (req) => {
     const e = new Error("This tag belongs to another clinic"); e.status = 409; throw e;
   }
   await assertTrustedPhone(req);
+  await sweepOpenSessions(req.orgId);
   const cp = await consumeChallenge(challenge, req.user);
   if (!cp) { const e = new Error("This scan has expired — tap the tag again"); e.status = 410; throw e; }
   const { known, deviceId } = await touchDevice(req.user.id, req.deviceToken, req.headers["user-agent"]);
@@ -416,6 +422,7 @@ app.post("/api/leave", requireAuth, handle(async (req) => requestLeave(req.user,
 
 // ---------------------------------------------------------------- team & approvals (manager)
 app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
+  await sweepOpenSessions(req.orgId);
   const date = req.query.date || todayStr();
   const locationId = Number(req.query.location_id) || null;
   const allUsers = await db.all(`
@@ -448,7 +455,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
       risk: d.attendance?.risk_level || null,
       worked_min: d.worked_min,
       sessions: d.sessions.map((s) => ({
-        in: s.clock_in, out: s.clock_out, method: s.clock_in_method,
+        id: s.id, in: s.clock_in, out: s.clock_out, method: s.clock_in_method, status: s.status,
         device_id: s.device_id || null,
         entrance: (cpName && s.checkpoint_id && cpName.get(s.checkpoint_id)) || null,
         minutes: s.clock_out ? s.worked_minutes : null,
@@ -470,6 +477,7 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
   const pending = await pendingApprovals(req.orgId);
   return {
     date, counts, roster, coverage, staffing, pending: pendingMembers,
+    still_in: await stillIn(req.orgId),
     pending_actions: {
       leaves: pending.leaves.length,
       corrections: pending.corrections.length,
@@ -481,7 +489,24 @@ app.get("/api/team/today", requireAuth, requireManager, handle(async (req) => {
   };
 }));
 
-app.get("/api/approvals", requireAuth, requireManager, handle(async (req) => pendingApprovals(req.orgId)));
+app.get("/api/approvals", requireAuth, requireManager, handle(async (req) => {
+  await sweepOpenSessions(req.orgId);
+  return pendingApprovals(req.orgId);
+}));
+// Forgotten clock-outs: the manager sets the real time (open or auto-closed
+// session) or decides it earns nothing.
+app.post("/api/attendance/:id/set-clock-out", requireAuth, requireManager, handle(async (req) =>
+  setClockOut(req.user, Number(req.params.id), req.body?.time)
+));
+app.post("/api/attendance/:id/missing-out/reject", requireAuth, requireManager, handle(async (req) =>
+  rejectMissingOut(req.user, Number(req.params.id))
+));
+// Scheduled sweep (vercel.json cron) — every clinic, closes stale sessions.
+app.get("/api/cron/sweep", handle(async (req) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.headers.authorization !== `Bearer ${secret}`) { const e = new Error("Forbidden"); e.status = 403; throw e; }
+  return { closed: await sweepAll() };
+}));
 app.post("/api/approvals/:type/:id", requireAuth, requireManager, handle(async (req) => {
   await decide(req.user, req.params.type, req.params.id, req.body?.decision, req.body?.note || "");
   return { ok: true };
@@ -520,6 +545,7 @@ app.get("/api/employees", requireAuth, requireManager, handle(async (req) => ({
     rest.phone_linked = !!u.trusted_device_id;
     return rest;
   }),
+  forgot_out_month: await forgotCounts(req.orgId, todayStr().slice(0, 7)),
 })));
 
 // PINs identify employees at checkpoints/kiosks, so they must be unique per org.

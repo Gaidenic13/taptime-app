@@ -49,6 +49,17 @@ export default function Approvals() {
     await api(`/flags/${id}/resolve`, { method: "POST", body: { note: "Reviewed" } });
     after(t("ap.flagResolved"));
   };
+  const [outTimes, setOutTimes] = useState({});
+  const fixMissing = async (m) => {
+    const time = outTimes[m.id] ?? (m.asked_out || m.shift_end || "");
+    if (!time) { setNotice(t("miss.needTime")); return; }
+    await api(`/attendance/${m.id}/set-clock-out`, { method: "POST", body: { time } });
+    after(t("miss.fixed", { time }));
+  };
+  const rejectMissing = async (m) => {
+    await api(`/attendance/${m.id}/missing-out/reject`, { method: "POST" });
+    after(t("miss.zeroed"));
+  };
   const decideLink = (id) => async (decision) => {
     await api(`/phone-links/${id}/${decision === "approved" ? "approve" : "reject"}`, { method: "POST" });
     after(t(`ap.decided.${decision}`));
@@ -56,7 +67,8 @@ export default function Approvals() {
 
   if (!data) return null;
   const links = data.links || [];
-  const total = links.length + data.leaves.length + data.corrections.length + data.overtime.length +
+  const missing = data.missing || [];
+  const total = links.length + missing.length + data.leaves.length + data.corrections.length + data.overtime.length +
     data.reviews.length + data.flags.length;
 
   const kindLabel = {
@@ -92,6 +104,34 @@ export default function Approvals() {
               <div className="row">
                 <button className="btn approve small" onClick={() => decideLink(m.id)("approved")}>{t("common.approve")}</button>
                 <button className="btn danger small" onClick={() => decideLink(m.id)("rejected")}>{t("common.reject")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {missing.length > 0 && (
+        <div className="card">
+          <h2>{t("miss.cardTitle")}</h2>
+          <p className="small muted" style={{ marginTop: -4 }}>{t("miss.cardSub")}</p>
+          {missing.map((m) => (
+            <div className="list-item" key={m.id}>
+              <div className="spread">
+                <div>
+                  <strong>{m.first_name} {m.last_name}</strong> <span className="muted">· {fmtDate(m.date)}</span>
+                  <div className="small muted">
+                    {t("common.in")} {fmtTime(m.clock_in)}
+                    {m.entrance ? ` · ${m.entrance}` : ""}{m.device_id ? ` · ${t("days.device")} #${m.device_id}` : ""}
+                    {m.shift_end ? ` · ${t("miss.shiftEnd", { time: m.shift_end })}` : ""}
+                  </div>
+                  {m.asked_out && <div className="small" style={{ fontWeight: 600 }}>{t("miss.askedOut", { time: m.asked_out })}</div>}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <input type="time" value={outTimes[m.id] ?? (m.asked_out || m.shift_end || "")}
+                    onChange={(e) => setOutTimes({ ...outTimes, [m.id]: e.target.value })} style={{ width: 120 }} />
+                  <button className="btn approve small" onClick={() => fixMissing(m)}>{t("miss.setTime")}</button>
+                  <button className="btn danger small" onClick={() => rejectMissing(m)}>{t("miss.noHours")}</button>
+                </div>
               </div>
             </div>
           ))}

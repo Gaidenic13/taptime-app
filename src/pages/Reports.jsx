@@ -50,7 +50,7 @@ function AttendanceTab() {
       `"${r.name}"`, `"${r.job_title}"`,
       (r.scheduled_min / 60).toFixed(1), (r.worked_min / 60).toFixed(1), (r.break_min / 60).toFixed(1),
       (r.missing_min / 60).toFixed(1), (r.overtime_min / 60).toFixed(1),
-      r.leave_days, r.late_days, r.absent_days,
+      r.leave_days, r.late_days, r.absent_days, r.forgot_out,
     ].join(","))
   );
 
@@ -84,7 +84,7 @@ function AttendanceTab() {
             <tr>
               <th>{t("common.employee")}</th><th>{t("common.role")}</th><th>{t("common.scheduled")}</th>
               <th>{t("common.worked")}</th><th>{t("common.breaks")}</th><th>{t("rep.missing")}</th>
-              <th>{t("rep.ot")}</th><th>{t("rep.leave")}</th><th>{t("rep.late")}</th><th>{t("rep.absentH")}</th>
+              <th>{t("rep.ot")}</th><th>{t("rep.leave")}</th><th>{t("rep.late")}</th><th>{t("rep.absentH")}</th><th>{t("rep.forgot")}</th>
             </tr>
           </thead>
           <tbody>
@@ -100,6 +100,7 @@ function AttendanceTab() {
                 <td>{r.leave_days || "—"}</td>
                 <td style={r.late_days > 2 ? { color: "var(--amber)", fontWeight: 600 } : {}}>{r.late_days || "—"}</td>
                 <td style={r.absent_days > 0 ? { color: "var(--red)", fontWeight: 600 } : {}}>{r.absent_days || "—"}</td>
+                <td style={r.forgot_out > 0 ? { color: "var(--red)", fontWeight: 600 } : {}}>{r.forgot_out || "—"}</td>
               </tr>
             ))}
           </tbody>

@@ -168,6 +168,7 @@ export default function Employees() {
   const { t } = useI18n();
   const isAdmin = user.role === "admin" || user.role === "owner";
   const [employees, setEmployees] = useState([]);
+  const [forgot, setForgot] = useState({});
   const [directory, setDirectory] = useState(null);
   const [modal, setModal] = useState(undefined);
   const [entriesFor, setEntriesFor] = useState(null);
@@ -176,7 +177,7 @@ export default function Employees() {
   const [justAdded, setJustAdded] = useState(null);
   const [error, setError] = useState("");
 
-  const load = () => api("/employees").then((d) => setEmployees(d.employees));
+  const load = () => api("/employees").then((d) => { setEmployees(d.employees); setForgot(d.forgot_out_month || {}); });
   useEffect(() => {
     load();
     api("/directory").then(setDirectory);
@@ -245,6 +246,9 @@ export default function Employees() {
                   e.role !== "employee" ? t(`emp.r${e.role === "admin" ? "Admin" : "Manager"}`) : (e.job_title && e.job_title !== "—" ? e.job_title : null),
                   e.role === "employee" ? t(e.phone_linked ? "emp.phoneLinked" : "emp.noPhone") : null,
                 ].filter(Boolean).join(" · ")}
+                {forgot[e.id] > 0 && (
+                  <span style={{ color: "var(--red)", fontWeight: 600 }}> · {t("miss.forgotN", { n: forgot[e.id] })}</span>
+                )}
               </div>
             </div>
             <div className="row" style={{ gap: 6 }}>

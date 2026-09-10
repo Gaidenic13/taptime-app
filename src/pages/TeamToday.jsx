@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, fmtMin, fmtTime, fmtLongDate } from "../api.js";
+import { api, fmtMin, fmtTime, fmtLongDate  } from "../api.js";
 import { useI18n } from "../i18n.jsx";
 
 // The manager's board answers one question at a glance: who is in right now,
@@ -8,9 +8,14 @@ import { useI18n } from "../i18n.jsx";
 const ORDER = { working: 0, break: 0, requires_review: 0, complete: 1, late: 2, upcoming: 3, absent: 4, leave: 5, no_shift: 6 };
 const IN = new Set(["working", "break", "requires_review"]);
 
+const nowHHMM = () => new Date().toTimeString().slice(0, 5);
+// Closing time when it has passed, otherwise "now" — never a future time.
+const suggestClose = (closing) => (closing && closing <= nowHHMM() ? closing : nowHHMM());
+
 export default function TeamToday() {
   const { t } = useI18n();
   const [data, setData] = useState(null);
+  const [closeAt, setCloseAt] = useState({});
   const [locations, setLocations] = useState([]);
   const [locId, setLocId] = useState("");
   const load = (l = locId) => api(`/team/today${l ? `?location_id=${l}` : ""}`).then(setData);
@@ -53,6 +58,29 @@ export default function TeamToday() {
         <div className="stat"><div className="n">{outToday}</div><div className="l">{t("team.outToday")}</div></div>
         <div className="stat"><div className="n">{notYet}</div><div className="l">{t("team.notYet")}</div></div>
       </div>
+
+      {data.still_in?.rows?.length > 0 && (
+        <div className="card tinted">
+          <h2>{t("miss.stillIn")}</h2>
+          <p className="small muted">{t("miss.stillInSub")}</p>
+          {data.still_in.rows.map((r) => (
+            <div className="person-row" key={r.id}>
+              <div className="person-main">
+                <strong>{r.name}</strong>
+                <div className="small muted">{t("common.in")} {fmtTime(r.clock_in)}</div>
+              </div>
+              <div className="row" style={{ gap: 6 }}>
+                <input type="time" value={closeAt[r.id] ?? suggestClose(data.still_in.closing_time)}
+                  onChange={(e) => setCloseAt({ ...closeAt, [r.id]: e.target.value })} style={{ width: 110 }} />
+                <button className="btn approve small" onClick={async () => {
+                  await api(`/attendance/${r.id}/set-clock-out`, { method: "POST", body: { time: closeAt[r.id] ?? suggestClose(data.still_in.closing_time) } });
+                  load(locId);
+                }}>{t("miss.closeDay")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {data.pending?.length > 0 && (
         <div className="card tinted">

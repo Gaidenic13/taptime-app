@@ -4,6 +4,7 @@ import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
 import Clock from "../components/Clock.jsx";
 import DayProgress from "../components/DayProgress.jsx";
+import MissingOut from "../components/MissingOut.jsx";
 
 // The member's personal view: today's in/out pairs, the last 7 days, and the
 // month total. No menus — they reach this from the scan page or the app root.
@@ -21,10 +22,15 @@ export default function MemberHome() {
   const { t } = useI18n();
   const [today, setToday] = useState(null);
   const [goalMin, setGoalMin] = useState(480);
+  const [missing, setMissing] = useState([]);
   const [history, setHistory] = useState(null);
 
+  const loadMe = () => api("/me").then((d) => {
+    setToday(d.today); setMissing(d.missing || []);
+    if (d.goal_min) setGoalMin(d.goal_min);
+  }).catch(() => {});
   useEffect(() => {
-    api("/me").then((d) => { setToday(d.today); if (d.goal_min) setGoalMin(d.goal_min); }).catch(() => {});
+    loadMe();
     api(`/attendance/history?month=${monthStr()}`).then(setHistory).catch(() => {});
   }, []);
 
@@ -41,6 +47,7 @@ export default function MemberHome() {
         <h2 style={{ marginTop: 6 }}>{t("dash.hi", { name: user.first_name })}</h2>
         {user.employment_status === "pending" && <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>}
         {user.employment_status === "rejected" && <div className="error-box">{t("cp.rejected")}</div>}
+        <MissingOut missing={missing} onChange={loadMe} />
         {today && user.employment_status === "active" && (() => {
           const open = today.status === "working" || today.status === "break";
           return (
@@ -59,8 +66,17 @@ export default function MemberHome() {
               <div className="history-row" key={s.id}>
                 <span>{fmtTime(s.clock_in)}</span>
                 <span className="history-arrow">→</span>
-                <span className={s.clock_out ? "" : "muted"}>{s.clock_out ? fmtTime(s.clock_out) : "…"}</span>
-                <span className="history-dur muted">{s.clock_out ? fmtMin(s.worked_minutes ?? 0) : t("status.working")}</span>
+                {s.status === "missing_out" ? (
+                  <>
+                    <span style={{ color: "var(--red)" }}>?</span>
+                    <span className="history-dur" style={{ color: "var(--red)", fontWeight: 600 }}>{t("miss.short")}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className={s.clock_out ? "" : "muted"}>{s.clock_out ? fmtTime(s.clock_out) : "…"}</span>
+                    <span className="history-dur muted">{s.clock_out ? fmtMin(s.worked_minutes ?? 0) : t("status.working")}</span>
+                  </>
+                )}
               </div>
             ))}
             <div className="history-total">{t("cp.workedToday", { dur: fmtMin(today.worked_min) })}</div>

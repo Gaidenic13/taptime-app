@@ -28,6 +28,7 @@ export async function attendanceReport(orgId, month, { locationId = null, jobRol
     const scheduledPast = shifts.filter((x) => x.date < todayStr())
       .reduce((s, x) => s + shiftMinutes(x.start_time, x.end_time), 0);
     let worked = 0, brTotal = 0, late = 0;
+    const forgot_out = atts.filter((a) => a.clock_out_method === "AUTO" || a.clock_out_method === "AUTO_FIXED").length;
     // Sessions model: several rows per day — sum them all; keep the EARLIEST
     // session per date for the late-arrival comparison.
     const attByDate = {};
@@ -64,7 +65,7 @@ export async function attendanceReport(orgId, month, { locationId = null, jobRol
       id: u.id, name: `${u.first_name} ${u.last_name}`, job_title: u.job_title || "—",
       scheduled_min: scheduled, worked_min: worked, break_min: brTotal,
       missing_min: Math.max(0, scheduledPast - worked),
-      overtime_min: otMin, leave_days: leaveDays, late_days: late, absent_days: absent,
+      overtime_min: otMin, leave_days: leaveDays, late_days: late, absent_days: absent, forgot_out,
     });
   }
   return rows;
