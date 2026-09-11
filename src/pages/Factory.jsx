@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import Credentials from "../components/Credentials.jsx";
 import QRCode from "qrcode";
 import { fmtDateTime } from "../api.js";
 import { I18nProvider, useI18n, LangSwitch } from "../i18n.jsx";
@@ -167,7 +168,8 @@ function FactoryInner() {
         <h2>{t("factory.inventory")}</h2>
         {tags.length === 0 && <div className="empty">—</div>}
         {tags.map((tg) => (
-          <div className="list-item spread" key={tg.id}>
+          <div className="list-item" key={tg.id}>
+          <div className="spread">
             <div style={{ minWidth: 0 }}>
               <div style={{ wordBreak: "break-all", fontWeight: 600, fontSize: 13 }}>{urlFor(tg.code)}</div>
               <div className="small muted">{fmtDateTime(tg.created_at)}</div>
@@ -186,6 +188,16 @@ function FactoryInner() {
                 />
               )}
             </div>
+          </div>
+          <details open style={{ marginTop: 12 }}>
+            <summary>{t("cred.title")}</summary>
+            <p className="small muted">{t(tg.organization_id ? "cred.note" : "cred.unclaimed")}</p>
+            {tg.organization_id && !tg.accounts.length && <p>{t("cred.empty")}</p>}
+            {tg.accounts.map((account) => <Credentials key={account.id} account={account} onSave={async (body) => {
+              const d = await factoryApi(`/tags/${tg.id}/credentials/${account.id}`, { method: "PUT", body });
+              setTags((prev) => prev.map((tag) => ({ ...tag, accounts: tag.accounts.map((a) => a.id === d.account.id ? d.account : a) })));
+            }} />)}
+          </details>
           </div>
         ))}
       </div>

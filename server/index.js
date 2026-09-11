@@ -1,4 +1,5 @@
 import express from "express";
+import { listCredentials, updateCredentials } from "./domains/credentials.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { db, insert } from "./db.js";
@@ -84,16 +85,28 @@ app.post("/api/factory/tags", requireFactory, handle(async (req) => {
   return { codes };
 }));
 
-app.get("/api/factory/tags", requireFactory, handle(async () => ({
-  tags: await db.all(`
-    SELECT pt.id, pt.code, pt.created_at, pt.claimed_at,
+app.get("/api/factory/tags", requireFactory, handle(async () => {
+  const tags = await db.all(`
+    SELECT pt.id, pt.code, pt.created_at, pt.claimed_at, pt.organization_id,
            o.name AS clinic, cp.name AS entrance
     FROM provisioned_tags pt
     LEFT JOIN organizations o ON o.id = pt.organization_id
     LEFT JOIN attendance_checkpoints cp ON cp.code = pt.code
     ORDER BY pt.id DESC LIMIT 100
-  `),
-})));
+  `);
+  const accounts = new Map();
+  for (const tag of tags) {
+    if (tag.organization_id && !accounts.has(tag.organization_id)) accounts.set(tag.organization_id, await listCredentials(tag.organization_id));
+    tag.accounts = accounts.get(tag.organization_id) || [];
+  }
+  return { tags };
+}));
+
+app.put("/api/factory/tags/:id/credentials/:userId", requireFactory, handle(async (req) => {
+  const tag = await db.get("SELECT organization_id FROM provisioned_tags WHERE id = ?", req.params.id);
+  if (!tag?.organization_id) throw new Error("This tag has not been activated");
+  return updateCredentials(tag.organization_id, req.params.userId, req.body || {}, null);
+}));
 
 // Only UNCLAIMED tags can be deleted — a claimed tag is a live entrance of a
 // real clinic and must never disappear from under it.
@@ -632,6 +645,12 @@ app.get("/api/directory", requireAuth, handle(async (req) => ({
 })));
 
 // ---------------------------------------------------------------- admin: settings & config
+app.get("/api/admin/credentials", requireAuth, requireAdmin, handle(async (req) => ({
+  accounts: await listCredentials(req.orgId),
+})));
+app.put("/api/admin/credentials/:userId", requireAuth, requireAdmin, handle(async (req) =>
+  updateCredentials(req.orgId, req.params.userId, req.body || {}, req.user.id, req.token)
+));
 app.get("/api/admin/settings", requireAuth, requireAdmin, handle(async (req) => ({
   settings: await getSettings(req.orgId), defaults: DEFAULT_SETTINGS,
 })));

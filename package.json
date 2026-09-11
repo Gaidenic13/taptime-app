@@ -10,7 +10,7 @@
     "dev:web": "vite",
     "seed": "node server/seed.js",
     "build": "vite build",
-    "test": "node --test server/tests/engine.test.js",
+    "test": "node --test server/tests/*.test.js",
     "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import Credentials from "../components/Credentials.jsx";
 import QRCode from "qrcode";
 import { api, fmtDateTime, weekdayNames } from "../api.js";
 import { useI18n } from "../i18n.jsx";
@@ -7,6 +8,23 @@ function QrImg({ url }) {
   const [src, setSrc] = useState("");
   useEffect(() => { QRCode.toDataURL(url, { width: 160, margin: 1 }).then(setSrc); }, [url]);
   return src ? <img className="qr-box" src={src} alt={`QR ${url}`} width={110} height={110} /> : null;
+}
+
+function ClinicCredentials() {
+  const { t } = useI18n();
+  const [accounts, setAccounts] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => { api("/admin/credentials").then((d) => setAccounts(d.accounts)).catch((e) => setError(e.message)); }, []);
+  return <div className="card">
+    <h2>{t("cred.title")}</h2><p className="small muted">{t("cred.note")}</p>
+    {error && <div className="error-box">{error}</div>}
+    {!accounts && !error && <p>…</p>}
+    {accounts?.length === 0 && <p>{t("cred.empty")}</p>}
+    {accounts?.map((account) => <Credentials key={account.id} account={account} onSave={async (body) => {
+      const d = await api(`/admin/credentials/${account.id}`, { method: "PUT", body });
+      setAccounts((prev) => prev.map((a) => a.id === d.account.id ? d.account : a));
+    }} />)}
+  </div>;
 }
 
 // ---------------------------------------------------------------- Rules
@@ -374,7 +392,7 @@ export default function Settings() {
   if (!directory) return null;
 
   const TABS = [
-    ["rules", "set.rules"], ["staffing", "set.staffing"], ["checkpoints", "set.checkpoints"],
+    ["credentials", "cred.title"], ["rules", "set.rules"], ["staffing", "set.staffing"], ["checkpoints", "set.checkpoints"],
     ["kiosks", "set.kiosks"], ["rolesDepts", "set.rolesDepts"], ["locations", "set.locations"],
     ["audit", "set.audit"],
   ];
@@ -390,6 +408,7 @@ export default function Settings() {
           <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{t(key)}</button>
         ))}
       </div>
+      {tab === "credentials" && <ClinicCredentials />}
       {tab === "rules" && <Rules />}
       {tab === "staffing" && <Staffing directory={directory} />}
       {tab === "checkpoints" && <Checkpoints directory={directory} kind="checkpoint" />}
