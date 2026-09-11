@@ -11,8 +11,8 @@ export async function audit({
   previous = null,
   next = null,
   metadata = "",
-}) {
-  await db.run(`
+}, executor = db) {
+  await executor.run(`
     INSERT INTO audit_log
       (organization_id, actor_id, action, entity_type, entity_id, previous_value, new_value, metadata, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

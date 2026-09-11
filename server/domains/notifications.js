@@ -2,8 +2,8 @@ import { db } from "../db.js";
 
 // Single write-path for notifications (plan Phase 19). In-app today; when email
 // is added it becomes a second transport inside notify(), not a second caller.
-export async function notify(orgId, userId, kind, title, body = "", link = "") {
-  await db.run(`
+export async function notify(orgId, userId, kind, title, body = "", link = "", executor = db) {
+  await executor.run(`
     INSERT INTO notifications (organization_id, user_id, kind, title, body, link, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `, orgId, userId, kind, title, body, link, new Date().toISOString());

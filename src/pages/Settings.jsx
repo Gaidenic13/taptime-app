@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../App.jsx";
+import ClinicProfile from "../components/ClinicProfile.jsx";
 import Credentials from "../components/Credentials.jsx";
 import QRCode from "qrcode";
 import { api, fmtDateTime, weekdayNames } from "../api.js";
@@ -407,6 +408,7 @@ export default function Settings() {
         <p>{t("set.sub")}</p>
       </div>
       <ClinicCredentials />
+      <ClinicProfile />
       <div className="tabs">
         {TABS.map(([k, key]) => (
           <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{t(key)}</button>

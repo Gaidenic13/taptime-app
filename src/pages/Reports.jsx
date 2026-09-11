@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { downloadCsv } from "../csv.js";
 import { api, fmtMin, fmtDate, fmtMonth } from "../api.js";
 import { useI18n } from "../i18n.jsx";
 
@@ -9,14 +10,6 @@ const shiftMonth = (month, delta) => {
   return monthStr(new Date(y, m - 1 + delta, 1));
 };
 
-function exportCsv(filename, head, lines) {
-  const blob = new Blob([[head, ...lines].join("\n")], { type: "text/csv" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
 
 function AttendanceTab() {
   const { t } = useI18n();
@@ -43,15 +36,13 @@ function AttendanceTab() {
     { scheduled: 0, worked: 0, overtime: 0, leave: 0 }
   );
 
-  const csv = () => exportCsv(
+  const csv = () => downloadCsv(
     `taptime-attendance-${month}.csv`,
-    "Employee,Role,Scheduled h,Worked h,Break h,Missing h,Overtime h,Leave days,Late days,Absences",
-    data.rows.map((r) => [
-      `"${r.name}"`, `"${r.job_title}"`,
-      (r.scheduled_min / 60).toFixed(1), (r.worked_min / 60).toFixed(1), (r.break_min / 60).toFixed(1),
-      (r.missing_min / 60).toFixed(1), (r.overtime_min / 60).toFixed(1),
-      r.leave_days, r.late_days, r.absent_days, r.forgot_out,
-    ].join(","))
+    ["common.employee", "common.role", "csv.scheduled", "csv.worked", "csv.breaks", "csv.missing", "csv.overtime", "rep.leaveDays", "rep.late", "rep.absentH", "rep.forgot"].map((key) => t(key)),
+    data.rows.map((r) => [r.name, r.job_title,
+      (r.scheduled_min / 60).toFixed(2), (r.worked_min / 60).toFixed(2), (r.break_min / 60).toFixed(2),
+      (r.missing_min / 60).toFixed(2), (r.overtime_min / 60).toFixed(2),
+      r.leave_days, r.late_days, r.absent_days, r.forgot_out])
   );
 
   return (
@@ -116,10 +107,10 @@ function LeaveTab() {
   useEffect(() => { api("/reports/leave").then(setData); }, []);
   if (!data) return null;
 
-  const csv = () => exportCsv(
+  const csv = () => downloadCsv(
     `taptime-leave-${data.year}.csv`,
-    "Employee,Role,Department,Used days,Remaining days",
-    data.rows.map((r) => [`"${r.name}"`, `"${r.job_title}"`, `"${r.department}"`, r.used, r.remaining].join(","))
+    ["common.employee", "common.role", "emp.department", "rep.used", "rep.remaining"].map((key) => t(key)),
+    data.rows.map((r) => [r.name, r.job_title, r.department, r.used, r.remaining])
   );
 
   return (
@@ -162,11 +153,15 @@ function StaffingTab() {
   useEffect(() => { api("/reports/staffing").then(setData); }, []);
   if (!data) return null;
   const gaps = data.rows.filter((r) => r.gap > 0);
+  const csv = () => downloadCsv(`taptime-staffing-${data.start}.csv`,
+    ["common.date", "common.location", "common.role", "rep.band", "rep.required", "common.scheduled", "rep.gap"].map((key) => t(key)),
+    data.rows.map((r) => [r.date, r.location, r.role, r.band, r.required, r.scheduled, r.gap]));
 
   return (
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <strong>{t("rep.coverage", { a: fmtDate(data.start), b: fmtDate(data.end) })}</strong>
+        <button className="btn small" onClick={csv}>{t("common.export")}</button>
         {gaps.length > 0
           ? <span className="pill late">{t("rep.gaps", { n: gaps.length })}</span>
           : <span className="pill working">{t("rep.covered")}</span>}

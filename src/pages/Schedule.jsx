@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import CopyWeek from "../components/CopyWeek.jsx";
 import { api, fmtDate } from "../api.js";
 import { useAuth } from "../App.jsx";
 import { useI18n } from "../i18n.jsx";
@@ -7,7 +8,7 @@ const DAY_MS = 86400000;
 function mondayOf(d = new Date()) {
   const x = new Date(d);
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x.toISOString().slice(0, 10);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
 }
 const addDays = (str, n) =>
   new Date(new Date(str + "T12:00:00").getTime() + n * DAY_MS).toISOString().slice(0, 10);
@@ -80,6 +81,9 @@ export default function Schedule() {
   const [filterLoc, setFilterLoc] = useState("");
   const [filterRole, setFilterRole] = useState("");
   const [adding, setAdding] = useState(null);
+  const [copying, setCopying] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
 
   const load = () => {
     const params = new URLSearchParams({ week });
@@ -88,7 +92,7 @@ export default function Schedule() {
       if (filterLoc) params.set("location_id", filterLoc);
       if (filterRole) params.set("job_role_id", filterRole);
     }
-    return api(`/schedule?${params}`).then(setData);
+    return api(`/schedule?${params}`).then((d) => { setData(d); setError(""); }).catch((e) => setError(e.message));
   };
 
   useEffect(() => { load(); }, [week, view, filterLoc, filterRole]);
@@ -97,13 +101,13 @@ export default function Schedule() {
     if (isManager) api("/employees").then((d) => setEmployees(d.employees.filter((e) => e.active)));
   }, [isManager]);
 
-  if (!data) return null;
+  if (!data) return <div className={error ? "error-box" : "empty"}>{error || t("common.loading")}</div>;
   const days = Array.from({ length: 7 }, (_, i) => addDays(week, i));
   const today = new Date().toISOString().slice(0, 10);
 
   const remove = async (id) => {
-    await api(`/schedule/${id}`, { method: "DELETE" });
-    load();
+    try { await api(`/schedule/${id}`, { method: "DELETE" }); load(); }
+    catch (e) { setError(e.message); }
   };
 
   return (
@@ -126,6 +130,8 @@ export default function Schedule() {
         </div>
       </div>
 
+      {notice && <div className="ok-box" role="status">{notice}</div>}
+      {error && <div className="error-box" role="alert">{error}</div>}
       {isManager && view === "team" && (
         <div className="row" style={{ marginBottom: 12 }}>
           <select value={filterLoc} onChange={(e) => setFilterLoc(e.target.value)} style={{ width: "auto" }}>
@@ -136,6 +142,7 @@ export default function Schedule() {
             <option value="">{t("sched.allRoles")}</option>
             {jobRoles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
+          <button className="btn small" disabled={!data.shifts.length} onClick={() => setCopying(true)}>{t("copy.title")}</button>
         </div>
       )}
 
@@ -164,6 +171,8 @@ export default function Schedule() {
         </div>
       </div>
 
+      {copying && <CopyWeek sourceWeek={week} targetWeek={addDays(week, 7)} locationId={filterLoc} jobRoleId={filterRole}
+        onClose={() => setCopying(false)} onDone={(target, created) => { setCopying(false); setNotice(t("copy.saved", { n: created })); setWeek(target); }} />}
       {adding && (
         <ShiftModal
           employees={employees}

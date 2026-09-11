@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Credentials from "../components/Credentials.jsx";
 import QRCode from "qrcode";
 import { fmtDateTime } from "../api.js";
@@ -72,26 +72,45 @@ function FactoryInner() {
   const [keyInput, setKeyInput] = useState("");
   const [tags, setTags] = useState([]);
   const [count, setCount] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
+  const [inventory, setInventory] = useState({ total: 0, pages: 1, counts: { total: 0, activated: 0, unclaimed: 0 } });
+  const [loading, setLoading] = useState(false);
+  const requestId = useRef(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [fresh, setFresh] = useState([]); // codes minted in this session, shown on top with QR
 
-  const load = () =>
-    factoryApi("/tags")
-      .then((d) => { setTags(d.tags); setAuthed(true); setError(""); })
-      .catch((e) => {
-        if (e.status === 401) { setAuthed(false); localStorage.removeItem(KEY_STORAGE); }
-        else setError(e.message);
-      });
+  const load = useCallback(async (overrides = {}) => {
+    const id = ++requestId.current;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ search, status, page, ...overrides });
+      const d = await factoryApi(`/tags?${params}`);
+      if (id !== requestId.current) return;
+      setTags(d.tags); setInventory(d); setPage(d.page); setAuthed(true); setError("");
+    } catch (e) {
+      if (id !== requestId.current) return;
+      if (e.status === 401) { setAuthed(false); localStorage.removeItem(KEY_STORAGE); }
+      setError(e.message);
+    } finally { if (id === requestId.current) setLoading(false); }
+  }, [search, status, page]);
 
   useEffect(() => {
     if (localStorage.getItem(KEY_STORAGE)) load();
-  }, []);
+  }, [load]);
 
   const unlock = (e) => {
     e.preventDefault();
     localStorage.setItem(KEY_STORAGE, keyInput.trim());
-    load().catch(() => {});
+    load();
+  };
+  const lock = () => {
+    ++requestId.current;
+    localStorage.removeItem(KEY_STORAGE);
+    setAuthed(false); setKeyInput(""); setTags([]); setFresh([]); setError(""); setLoading(false);
   };
 
   const mint = async () => {
@@ -99,7 +118,8 @@ function FactoryInner() {
     try {
       const d = await factoryApi("/tags", { method: "POST", body: { count: Number(count) || 1 } });
       setFresh(d.codes);
-      await load();
+      setSearchInput(""); setSearch(""); setStatus("all"); setPage(1);
+      await load({ search: "", status: "all", page: 1 });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -121,7 +141,7 @@ function FactoryInner() {
             <input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} required autoFocus />
           </label>
           {error && <div className="error-box">{error}</div>}
-          <button className="btn big">{t("login.signin")}</button>
+          <button className="btn big" disabled={loading}>{loading ? "…" : t("login.signin")}</button>
         </form>
       </div>
     );
@@ -132,6 +152,7 @@ function FactoryInner() {
       <div className="topline">
         <div className="brand" style={{ flex: 1 }}><span className="brand-mark">T</span>{t("factory.title")}</div>
         <LangSwitch />
+        <button className="btn subtle small" disabled={busy} onClick={lock}>{t("factory.lock")}</button>
       </div>
       <div className="page-head">
         <h1>{t("factory.heading")}</h1>
@@ -166,13 +187,31 @@ function FactoryInner() {
 
       <div className="card">
         <h2>{t("factory.inventory")}</h2>
-        {tags.length === 0 && <div className="empty">—</div>}
+        <div className="stats">
+          {[["total", "factory.total"], ["activated", "factory.activated"], ["unclaimed", "factory.unclaimed"]].map(([key, label]) =>
+            <div className="stat" key={key}><div className="n">{inventory.counts[key]}</div><div className="l">{t(label)}</div></div>)}
+        </div>
+        <form className="row" style={{ marginBottom: 12 }} onSubmit={(e) => { e.preventDefault(); setSearch(searchInput.trim()); setPage(1); }}>
+          <label className="field" style={{ flex: 1, minWidth: 180 }}><span>{t("factory.search")}</span>
+            <input type="search" value={searchInput} maxLength={120} onChange={(e) => setSearchInput(e.target.value)} />
+          </label>
+          <button className="btn small" disabled={loading}>{t("common.search")}</button>
+          <label className="field"><span>{t("factory.filter")}</span>
+            <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+              <option value="all">{t("factory.all")}</option><option value="activated">{t("factory.activated")}</option><option value="unclaimed">{t("factory.unclaimed")}</option>
+            </select>
+          </label>
+          <button type="button" className="btn subtle small" disabled={loading} onClick={() => load()}>{t("common.refresh")}</button>
+        </form>
+        {loading && <p role="status">{t("common.loading")}</p>}
+        {!loading && tags.length === 0 && <div className="empty">{t("factory.noResults")}</div>}
         {tags.map((tg) => (
           <div className="list-item" key={tg.id}>
           <div className="spread">
             <div style={{ minWidth: 0 }}>
               <div style={{ wordBreak: "break-all", fontWeight: 600, fontSize: 13 }}>{urlFor(tg.code)}</div>
-              <div className="small muted">{fmtDateTime(tg.created_at)}</div>
+              <div className="small muted">{t("factory.created")}: {fmtDateTime(tg.created_at)}</div>
+              {tg.claimed_at && <div className="small muted">{t("factory.activated")}: {fmtDateTime(tg.claimed_at)}</div>}
             </div>
             <div className="row">
               {tg.clinic
@@ -200,6 +239,13 @@ function FactoryInner() {
           </details>
           </div>
         ))}
+        <div className="spread" style={{ marginTop: 16 }}>
+          <span className="small muted">{t("factory.page", { page, pages: inventory.pages, total: inventory.total })}</span>
+          <div className="row">
+            <button className="btn subtle small" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>{t("common.previous")}</button>
+            <button className="btn subtle small" disabled={loading || page >= inventory.pages} onClick={() => setPage(page + 1)}>{t("common.next")}</button>
+          </div>
+        </div>
       </div>
     </div>
   );

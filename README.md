@@ -92,6 +92,29 @@ self-resetting SQLite demo in `/tmp`. Reseed production with
   roles & departments; multi-location employee assignment; every table and
   every query org-scoped
 
+## Clinic administration and operations (September 2026)
+
+- **Settings:** email/password controls remain at the top. Clinic Profile lets an
+  admin rename their clinic and update their own name and phone number. Changes
+  are scoped to that clinic and recorded in the audit log; tag links stay valid.
+- **Factory:** search all inventory by clinic name, admin email, entrance, or tag
+  code; filter activated/unclaimed units; view totals and activation dates;
+  navigate pages of 25 results. Refresh updates the inventory, and Lock Factory
+  clears the locally saved factory key.
+- **Schedule → Whole team → Copy week:** choose a Monday, preview shifts using
+  the current location/role filters, then create the batch. Overlapping shifts,
+  approved leave, inactive staff, or invalid location assignments block the
+  whole batch. Exact duplicates are skipped; conflicts are checked again when
+  saving. Each created shift has an audit entry and an in-app notification.
+- **Reports:** attendance, leave, and staffing CSV downloads use translated
+  headers and support Romanian characters, commas, quotes, and line breaks.
+  Attendance exports include the previously missing forgotten-clock-out header.
+
+Validation: `npm test` covers attendance, credentials, profile isolation, inventory
+pagination/search, schedule-copy conflicts/idempotency, and CSV formatting.
+Browser checks use a separate temporary SQLite demo; production data is not seeded
+or changed during testing.
+
 ## Structure
 
 ```
@@ -100,7 +123,7 @@ server/
   settings.js      configurable rules          audit.js  structured audit trail
   domains/         attendance · scheduling · staffing · requests · checkpoints
                    notifications · reports
-  tests/           engine.test.js (11 tests)
+  tests/           engine, credentials, and operations tests
   seed.js          demo clinic
 src/pages          Login · Terminal (kiosk) · Checkpoint · Dashboard · MyAttendance
                    Schedule · Leave · TeamToday · Approvals · Employees · Reports · Settings
@@ -109,5 +132,4 @@ src/pages          Login · Terminal (kiosk) · Checkpoint · Dashboard · MyAtt
 ## Deferred (next phases)
 
 Passkeys/WebAuthn identity step-up · email/push notification transports ·
-PostgreSQL/Prisma migration for SaaS multi-tenancy · recurring schedules ·
-appointment-system integration · payroll export · RO translation.
+automatic recurring schedules · appointment-system integration · payroll-specific exports.

@@ -1,4 +1,5 @@
 import express from "express";
+import { clinicProfile, updateClinicProfile, factoryInventory } from "./domains/administration.js";
 import { listCredentials, updateCredentials } from "./domains/credentials.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -11,7 +12,7 @@ import {
   assertPinAllowed, recordPinAttempt, setSessionCookie, clearSessionCookie,
 } from "./auth.js";
 import { dayStatus, clockIn, clockOut, breakAction, resolveReview, tapToggle, hasOpenSession } from "./domains/attendance.js";
-import { createShift, deleteShift, weekShifts } from "./domains/scheduling.js";
+import { createShift, deleteShift, weekShifts, copyWeek } from "./domains/scheduling.js";
 import { coverageFor } from "./domains/staffing.js";
 import {
   requestLeave, requestCorrection, pendingApprovals, decide, resolveFlag,
@@ -85,22 +86,7 @@ app.post("/api/factory/tags", requireFactory, handle(async (req) => {
   return { codes };
 }));
 
-app.get("/api/factory/tags", requireFactory, handle(async () => {
-  const tags = await db.all(`
-    SELECT pt.id, pt.code, pt.created_at, pt.claimed_at, pt.organization_id,
-           o.name AS clinic, cp.name AS entrance
-    FROM provisioned_tags pt
-    LEFT JOIN organizations o ON o.id = pt.organization_id
-    LEFT JOIN attendance_checkpoints cp ON cp.code = pt.code
-    ORDER BY pt.id DESC LIMIT 100
-  `);
-  const accounts = new Map();
-  for (const tag of tags) {
-    if (tag.organization_id && !accounts.has(tag.organization_id)) accounts.set(tag.organization_id, await listCredentials(tag.organization_id));
-    tag.accounts = accounts.get(tag.organization_id) || [];
-  }
-  return { tags };
-}));
+app.get("/api/factory/tags", requireFactory, handle(async (req) => factoryInventory(req.query)));
 
 app.put("/api/factory/tags/:id/credentials/:userId", requireFactory, handle(async (req) => {
   const tag = await db.get("SELECT organization_id FROM provisioned_tags WHERE id = ?", req.params.id);
@@ -404,6 +390,8 @@ app.get("/api/schedule", requireAuth, handle(async (req) => {
   return { week, shifts: await weekShifts(req.orgId, week, addDays(week, 6), filters) };
 }));
 
+app.post("/api/schedule/copy-week", requireAuth, requireManager, handle(async (req) => copyWeek(req.user, req.body || {})));
+
 app.post("/api/schedule", requireAuth, requireManager, handle(async (req) => {
   const b = req.body || {};
   if (!b.user_id || !b.date || !b.start_time || !b.end_time) {
@@ -645,6 +633,9 @@ app.get("/api/directory", requireAuth, handle(async (req) => ({
 })));
 
 // ---------------------------------------------------------------- admin: settings & config
+app.get("/api/admin/profile", requireAuth, requireAdmin, handle(async (req) => ({ profile: await clinicProfile(req.user) })));
+app.put("/api/admin/profile", requireAuth, requireAdmin, handle(async (req) => updateClinicProfile(req.user, req.body || {})));
+
 app.get("/api/admin/credentials", requireAuth, requireAdmin, handle(async (req) => ({
   accounts: await listCredentials(req.orgId),
 })));
