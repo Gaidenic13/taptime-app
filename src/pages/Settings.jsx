@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useAuth } from "../App.jsx";
 import Credentials from "../components/Credentials.jsx";
 import QRCode from "qrcode";
 import { api, fmtDateTime, weekdayNames } from "../api.js";
@@ -12,6 +13,7 @@ function QrImg({ url }) {
 
 function ClinicCredentials() {
   const { t } = useI18n();
+  const { user, adoptSession } = useAuth();
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => { api("/admin/credentials").then((d) => setAccounts(d.accounts)).catch((e) => setError(e.message)); }, []);
@@ -23,6 +25,7 @@ function ClinicCredentials() {
     {accounts?.map((account) => <Credentials key={account.id} account={account} onSave={async (body) => {
       const d = await api(`/admin/credentials/${account.id}`, { method: "PUT", body });
       setAccounts((prev) => prev.map((a) => a.id === d.account.id ? d.account : a));
+      if (d.account.id === user.id) adoptSession({ ...user, email: d.account.email });
     }} />)}
   </div>;
 }
@@ -387,12 +390,12 @@ export default function Settings() {
   const { t } = useI18n();
   const [tab, setTab] = useState("rules");
   const [directory, setDirectory] = useState(null);
-  const loadDir = () => api("/directory").then(setDirectory);
+  const [directoryError, setDirectoryError] = useState("");
+  const loadDir = () => api("/directory").then((d) => { setDirectory(d); setDirectoryError(""); }).catch((e) => setDirectoryError(e.message));
   useEffect(() => { loadDir(); }, []);
-  if (!directory) return null;
 
   const TABS = [
-    ["credentials", "cred.title"], ["rules", "set.rules"], ["staffing", "set.staffing"], ["checkpoints", "set.checkpoints"],
+    ["rules", "set.rules"], ["staffing", "set.staffing"], ["checkpoints", "set.checkpoints"],
     ["kiosks", "set.kiosks"], ["rolesDepts", "set.rolesDepts"], ["locations", "set.locations"],
     ["audit", "set.audit"],
   ];
@@ -403,18 +406,19 @@ export default function Settings() {
         <h1>{t("set.title")}</h1>
         <p>{t("set.sub")}</p>
       </div>
+      <ClinicCredentials />
       <div className="tabs">
         {TABS.map(([k, key]) => (
           <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{t(key)}</button>
         ))}
       </div>
-      {tab === "credentials" && <ClinicCredentials />}
+      {directoryError && <div className="error-box" role="alert">{directoryError}</div>}
       {tab === "rules" && <Rules />}
-      {tab === "staffing" && <Staffing directory={directory} />}
-      {tab === "checkpoints" && <Checkpoints directory={directory} kind="checkpoint" />}
-      {tab === "kiosks" && <Checkpoints directory={directory} kind="kiosk" />}
-      {tab === "rolesDepts" && <RolesDepts directory={directory} reload={loadDir} />}
-      {tab === "locations" && <Locations directory={directory} reload={loadDir} />}
+      {tab === "staffing" && directory && <Staffing directory={directory} />}
+      {tab === "checkpoints" && directory && <Checkpoints directory={directory} kind="checkpoint" />}
+      {tab === "kiosks" && directory && <Checkpoints directory={directory} kind="kiosk" />}
+      {tab === "rolesDepts" && directory && <RolesDepts directory={directory} reload={loadDir} />}
+      {tab === "locations" && directory && <Locations directory={directory} reload={loadDir} />}
       {tab === "audit" && <AuditLog />}
     </>
   );
