@@ -133,7 +133,10 @@ app.post("/api/auth/login", handle(async (req, res) => {
     const err = new Error("Team members don't sign in — just scan the clinic tag");
     err.status = 403; throw err;
   }
-  const token = await createSession(user.id);
+  const token = await createSession(user.id, {
+    userAgent: req.headers["user-agent"],
+    ipAddress: req.ip,
+  });
   setSessionCookie(res, token);
   await touchDevice(user.id, req.headers["x-device-token"], req.headers["user-agent"]);
   await audit({ orgId: user.organization_id, actorId: user.id, action: "login" });
@@ -143,6 +146,45 @@ app.post("/api/auth/login", handle(async (req, res) => {
 app.post("/api/auth/logout", requireAuth, handle(async (req, res) => {
   await destroySession(req.token);
   clearSessionCookie(res);
+  return { ok: true };
+}));
+
+// Session management: admins can review and revoke sessions for their clinic;
+// any user may revoke their own sessions except the one making the request.
+app.get("/api/admin/sessions", requireAuth, requireAdmin, handle(async (req) => ({
+  sessions: (await db.all(`
+    SELECT s.token, s.user_id, s.created_at, s.last_seen_at, s.user_agent, s.ip_address,
+           u.first_name, u.last_name, u.email, u.role
+    FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE u.organization_id = ? AND u.active = 1 ORDER BY s.last_seen_at DESC
+  `, req.orgId)).map((s) => ({ ...s, current: s.token === req.token, token: undefined })),
+})));
+
+app.delete("/api/admin/sessions/:userId", requireAuth, requireAdmin, handle(async (req) => {
+  const target = await db.get("SELECT id FROM users WHERE id = ? AND organization_id = ? AND active = 1", req.params.userId, req.orgId);
+  if (!target) { const e = new Error("User not found"); e.status = 404; throw e; }
+  await db.run("DELETE FROM sessions WHERE user_id = ? AND token <> ?", target.id, req.token);
+  await audit({ orgId: req.orgId, actorId: req.user.id, action: "sessions_revoke", entityType: "user", entityId: target.id });
+  return { ok: true };
+}));
+
+app.delete("/api/auth/sessions", requireAuth, handle(async (req) => {
+  await db.run("DELETE FROM sessions WHERE user_id = ? AND token <> ?", req.user.id, req.token);
+  await audit({ orgId: req.orgId, actorId: req.user.id, action: "own_sessions_revoke", entityType: "user", entityId: req.user.id });
+  return { ok: true };
+}));
+
+app.put("/api/auth/password", requireAuth, handle(async (req) => {
+  const current = String(req.body?.current_password || "");
+  const next = String(req.body?.new_password || "");
+  const stored = await db.get("SELECT password_hash FROM users WHERE id = ?", req.user.id);
+  if (!stored?.password_hash || !verifyPassword(current, stored.password_hash)) {
+    const e = new Error("Current password is incorrect"); e.status = 400; throw e;
+  }
+  if (next.length < 6 || next.length > 256) throw new Error("Password must contain 6–256 characters");
+  await db.run("UPDATE users SET password_hash = ? WHERE id = ?", hashPassword(next), req.user.id);
+  await db.run("DELETE FROM sessions WHERE user_id = ? AND token <> ?", req.user.id, req.token);
+  await audit({ orgId: req.orgId, actorId: req.user.id, action: "password_change", entityType: "user", entityId: req.user.id });
   return { ok: true };
 }));
 

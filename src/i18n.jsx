@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState } from "react";
 const dict = {
   en: {
     "common.loading": "Loading…",
+    "security.sessions": "Active sessions", "security.sessionsNote": "Review signed-in devices and revoke sessions you no longer recognize.", "security.noSessions": "No active sessions.", "security.current": "This session", "security.revoke": "Revoke", "security.revokeConfirm": "Revoke all other sessions for this account?", "security.lastSeen": "Last seen", "security.unknownDevice": "Unknown device", "security.changePassword": "Change your password", "security.changePasswordNote": "Use your current password to set a new one. Other sessions will be signed out.", "security.currentPassword": "Current password", "security.newPassword": "New password", "security.confirmPassword": "Confirm new password", "security.passwordMismatch": "The new passwords do not match.",
     "common.retry": "Retry",
     "common.search": "Search",
     "common.refresh": "Refresh",
@@ -357,6 +358,7 @@ const dict = {
 
   ro: {
     "common.loading": "Se încarcă…",
+    "security.sessions": "Sesiuni active", "security.sessionsNote": "Verifică dispozitivele conectate și revocă sesiunile pe care nu le recunoști.", "security.noSessions": "Nu există sesiuni active.", "security.current": "Sesiunea curentă", "security.revoke": "Revocă", "security.revokeConfirm": "Revoci toate celelalte sesiuni pentru acest cont?", "security.lastSeen": "Văzut ultima dată", "security.unknownDevice": "Dispozitiv necunoscut", "security.changePassword": "Schimbă parola", "security.changePasswordNote": "Folosește parola actuală pentru a seta una nouă. Celelalte sesiuni vor fi deconectate.", "security.currentPassword": "Parola actuală", "security.newPassword": "Parolă nouă", "security.confirmPassword": "Confirmă parola nouă", "security.passwordMismatch": "Parolele noi nu coincid.",
     "common.retry": "Reîncearcă",
     "common.search": "Caută",
     "common.refresh": "Actualizează",

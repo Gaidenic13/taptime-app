@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useAuth } from "../App.jsx";
 import ClinicProfile from "../components/ClinicProfile.jsx";
 import Credentials from "../components/Credentials.jsx";
+import SessionManager from "../components/SessionManager.jsx";
+import ChangePassword from "../components/ChangePassword.jsx";
 import QRCode from "qrcode";
 import { api, fmtDateTime, weekdayNames } from "../api.js";
 import { useI18n } from "../i18n.jsx";
@@ -409,6 +411,8 @@ export default function Settings() {
       </div>
       <ClinicCredentials />
       <ClinicProfile />
+      <SessionManager />
+      <ChangePassword />
       <div className="tabs">
         {TABS.map(([k, key]) => (
           <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{t(key)}</button>

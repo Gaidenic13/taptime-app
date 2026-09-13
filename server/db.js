@@ -87,6 +87,28 @@ CREATE TABLE IF NOT EXISTS employee_locations (
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL DEFAULT '',
+  user_agent TEXT DEFAULT '',
+  ip_address TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  token_hash TEXT PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  invited_by INTEGER NOT NULL REFERENCES users(id),
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'manager',
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -403,6 +425,9 @@ if (isPg) {
 const ADDED_COLUMNS = [
   ["users", "trusted_device_id", "INTEGER"],
   ["devices", "replaced_at", "TEXT"],
+  ["sessions", "last_seen_at", "TEXT NOT NULL DEFAULT ''"],
+  ["sessions", "user_agent", "TEXT DEFAULT ''"],
+  ["sessions", "ip_address", "TEXT DEFAULT ''"],
 ];
 for (const [table, column, type] of ADDED_COLUMNS) {
   if (isPg) {

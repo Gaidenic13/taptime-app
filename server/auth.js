@@ -13,11 +13,12 @@ export function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(candidate, "hex"));
 }
 
-export async function createSession(userId) {
+export async function createSession(userId, { userAgent = "", ipAddress = "" } = {}) {
   const token = crypto.randomBytes(32).toString("hex");
+  const now = new Date().toISOString();
   await db.run(
-    "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
-    token, userId, new Date().toISOString()
+    "INSERT INTO sessions (token, user_id, created_at, last_seen_at, user_agent, ip_address) VALUES (?, ?, ?, ?, ?, ?)",
+    token, userId, now, now, String(userAgent).slice(0, 300), String(ipAddress).slice(0, 100)
   );
   return token;
 }
@@ -100,6 +101,7 @@ export const requireAuth = guarded(async (req, res, next) => {
   req.user = user;
   req.orgId = user.organization_id;
   req.token = token;
+  await db.run("UPDATE sessions SET last_seen_at = ? WHERE token = ?", new Date().toISOString(), token);
   req.deviceToken = req.headers["x-device-token"] || null;
   next();
 });
