@@ -38,6 +38,9 @@ npm run dev      # API on :4180 (env API_PORT), app on :4181
 npm test         # business-logic test suite
 ```
 
+The product landing page is available at `/landing/`. It includes the TapTime
+3D prototype, hardware details, proposal PDF, and printable model downloads.
+
 **Deployment** (Vercel, auto-deploys on push to `main`): the serverless entry
 is [api/index.js](api/index.js). With `DATABASE_URL` set (Neon Postgres via the
 Vercel Marketplace) data persists; without it the app falls back to a

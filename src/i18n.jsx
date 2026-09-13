@@ -74,7 +74,7 @@ const dict = {
     // login
     "login.tagline": "Workforce & clinic operations",
     "login.signin": "Sign in", "login.signingin": "Signing in…",
-    "login.shared": "Shared clinic device?", "login.terminal": "Open terminal mode",
+    "login.shared": "Shared clinic device?", "login.terminal": "Open terminal mode", "login.about": "Learn about TapTime",
     "login.new": "New clinic?", "login.signup": "Create your account",
     "login.membersNote": "Sign-in is for managers and admins. Team members just scan the clinic tag.",
     "member.note": "You check in and out by scanning the clinic tag — nothing else to do here.",
@@ -423,7 +423,7 @@ const dict = {
     "common.in": "intrare", "common.out": "ieșire", "common.review": "Vezi", "common.export": "Export CSV",
     "login.tagline": "Pontaj și operațiuni pentru clinici",
     "login.signin": "Autentificare", "login.signingin": "Se conectează…",
-    "login.shared": "Dispozitiv comun al clinicii?", "login.terminal": "Deschide modul terminal",
+    "login.shared": "Dispozitiv comun al clinicii?", "login.terminal": "Deschide modul terminal", "login.about": "Află mai multe despre TapTime",
     "login.new": "Clinică nouă?", "login.signup": "Creează-ți contul",
     "login.membersNote": "Autentificarea este pentru manageri și administratori. Membrii echipei doar scanează tag-ul clinicii.",
     "member.note": "Pontezi intrarea și ieșirea scanând tag-ul clinicii — nimic altceva de făcut aici.",

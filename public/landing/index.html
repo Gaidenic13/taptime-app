@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d343b">
+  <title>TapTime — Tap in. Tap out. Clear records.</title>
+  <meta name="description" content="A physical NFC attendance checkpoint for modern workplaces and clinics.">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="vendor/model-viewer.min.js"></script>
+</head>
+<body>
+  <header class="nav shell">
+    <a class="brand" href="#top" aria-label="TapTime home"><span class="brand-mark">T</span><span>TapTime</span></a>
+    <nav aria-label="Primary navigation">
+      <a href="#how">How it works</a><a href="#hardware">Hardware</a><a href="#pilot">Pilot</a>
+    </nav>
+    <a class="button button-small" href="TapTime-Workplace-Attendance-Proposal.pdf" target="_blank">View proposal <span>↗</span></a>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <div class="hero-copy">
+        <p class="eyebrow"><span></span> NFC attendance, made tangible</p>
+        <h1>Tap in.<br>Tap out.<br><em>Clear records.</em></h1>
+        <p class="hero-lead">A simple physical checkpoint that turns one phone tap into a trustworthy attendance event—without surveillance, batteries, or kiosk training.</p>
+        <div class="hero-actions">
+          <a class="button" href="#pilot">Start a pilot <span>→</span></a>
+          <a class="text-link" href="#hardware">Explore the device <span>↓</span></a>
+        </div>
+        <div class="proof"><span class="pulse"></span><strong>Solid-case prototype</strong><span>56 × 56 × 17 mm · Enclosed NFC · Magnetic or wall mounted</span></div>
+      </div>
+      <div class="device-stage" aria-label="TapTime NFC device concept">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+        <div class="device-shadow"></div>
+        <model-viewer class="hero-model" src="cad/output/taptime-solid-case.glb" alt="Solid TapTime NFC case" auto-rotate loading="eager" camera-orbit="-32deg 58deg 118%" rotation-per-second="10deg" shadow-intensity="1.2" shadow-softness=".7" exposure="1.05" environment-image="neutral" interaction-prompt="none"></model-viewer>
+        <div class="dimension dimension-x">56 mm</div>
+        <div class="dimension dimension-z">17 mm</div>
+        <div class="stage-note"><span>01</span> A physical point of presence</div>
+      </div>
+    </section>
+
+    <section class="statement">
+      <div class="shell statement-grid"><p class="eyebrow light">The core idea</p><p>Attendance should feel like arriving—not like being watched.</p></div>
+    </section>
+
+    <section class="section shell" id="how">
+      <div class="section-head"><div><p class="eyebrow"><span></span> One natural gesture</p><h2>From doorway to record<br>in under two seconds.</h2></div><p>TapTime uses the familiar NFC gesture already built into modern phones. The web app identifies the employee, confirms the location, and records the event.</p></div>
+      <div class="steps">
+        <article><span class="step-no">01</span><div class="step-icon phone-icon">▯<b>)))</b></div><h3>Approach</h3><p>Open the lightweight check-in page and hold the phone near TapTime.</p></article>
+        <article><span class="step-no">02</span><div class="step-icon">⌁</div><h3>Tap</h3><p>The NFC tag opens a signed workplace link. No device battery is needed.</p></article>
+        <article><span class="step-no">03</span><div class="step-icon">✓</div><h3>Confirm</h3><p>A clear success screen records check-in or check-out and shows the exact time.</p></article>
+      </div>
+    </section>
+
+    <section class="hardware" id="hardware">
+      <div class="shell hardware-grid">
+        <div class="exploded" aria-label="Exploded TapTime enclosure diagram">
+          <div class="part front-part"><span class="case-wordmark">TAPTIME</span><i class="case-wall"></i></div>
+          <div class="part tag-part"><span>NFC</span></div>
+          <div class="part back-part"><i></i><i></i><i></i><i></i></div>
+          <div class="part-label label-front"><b>01</b> 11 mm front case</div>
+          <div class="part-label label-tag"><b>02</b> Enclosed NFC module</div>
+          <div class="part-label label-back"><b>03</b> 6 mm magnetic rear case</div>
+        </div>
+        <div class="hardware-copy"><p class="eyebrow light">Print it this week</p><h2>Not a card.<br>A solid checkpoint.</h2><p>A substantial two-piece case encloses the NFC module completely. The 17 mm body feels like a small appliance in the hand, while the removable rear gives access to the tag and mounting hardware.</p>
+          <dl><div><dt>56 × 56 × 17 mm</dt><dd>Brick-like depth with a compact footprint</dd></div><div><dt>Printed wordmark</dt><dd>Recessed TAPTIME branding built into the front case</dd></div><div><dt>Internal NFC cradle</dt><dd>The 25 mm tag is protected inside the body</dd></div><div><dt>Dual mounting</dt><dd>15 mm magnets or two countersunk screws</dd></div></dl>
+          <a class="button button-gold" href="cad/output/taptime-print-pack.zip" download>Download print pack <span>↓</span></a>
+        </div>
+        <div class="model-lab">
+          <div class="model-copy"><p class="eyebrow light">Interactive prototype</p><h3>Turn it around.</h3><p>Drag to rotate the assembled case. Scroll or pinch to zoom. This viewer uses the same front and rear geometry as the printable STL files.</p><div class="model-downloads"><a class="button button-gold" href="cad/output/taptime-solid-case.glb" download>Download GLB model <span>↓</span></a><a class="button button-outline" href="cad/output/taptime-front-case.stl" download>Front case STL <span>↓</span></a><a class="button button-outline" href="cad/output/taptime-rear-case.stl" download>Rear case STL <span>↓</span></a></div></div>
+          <model-viewer src="cad/output/taptime-solid-case.glb" alt="Interactive 3D model of the solid TapTime NFC case with recessed TapTime wordmark" camera-controls auto-rotate loading="eager" camera-orbit="0deg 28deg 88%" rotation-per-second="14deg" shadow-intensity="1" shadow-softness=".8" exposure="1.05" environment-image="neutral" interaction-prompt="auto" touch-action="pan-y">
+            <div class="model-loading" slot="poster">Loading 3D case…</div>
+          </model-viewer>
+        </div>
+      </div>
+    </section>
+
+    <section class="section shell" id="pilot">
+      <div class="pilot-card">
+        <div><p class="eyebrow light">MVP path</p><h2>One entrance.<br>One team. Four weeks.</h2><p>Validate the behavior before investing in custom hardware. Start with an NFC tag, this enclosure, and a small web flow.</p><a class="button button-gold" href="TapTime-Workplace-Attendance-Proposal.pdf" target="_blank">Read the full proposal <span>↗</span></a></div>
+        <ol><li><span>Week 1</span><strong>Print & program</strong><p>Print the enclosure and write the pilot URL to the NFC tag.</p></li><li><span>Week 2</span><strong>Team test</strong><p>Enroll 5–10 employees and observe the entry flow.</p></li><li><span>Weeks 3–4</span><strong>Measure & learn</strong><p>Track successful taps, corrections, and payroll usefulness.</p></li></ol>
+      </div>
+      <div class="caveat"><strong>MVP honesty</strong><p>A passive NFC tap proves that a phone reached the tag. It does not, by itself, prove who held the phone. Production should add authenticated employee accounts, rotating signed links, audit logs, and a dedicated reader where stronger assurance is required.</p></div>
+    </section>
+  </main>
+
+  <footer class="shell"><a class="brand" href="#top"><span class="brand-mark">T</span><span>TapTime</span></a><p>Physical presence. Clear records.</p><p>Prototype · August 2026</p></footer>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -47,6 +47,9 @@ export default function Login() {
         <p className="small muted" style={{ marginTop: 6 }}>
           {t("login.shared")} <Link to="/terminal">{t("login.terminal")}</Link>
         </p>
+        <p className="small muted" style={{ marginTop: 6 }}>
+          <a href="/landing/">{t("login.about")}</a>
+        </p>
       </form>
     </div>
   );

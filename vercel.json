@@ -5,7 +5,8 @@
   "framework": null,
   "crons": [{ "path": "/api/cron/sweep", "schedule": "0 2 * * *" }],
   "rewrites": [
+    { "source": "/landing", "destination": "/landing/index.html" },
     { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|landing/).*)", "destination": "/index.html" }
   ]
 }
