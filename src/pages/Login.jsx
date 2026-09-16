@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../App.jsx";
 import { useI18n, LangSwitch } from "../i18n.jsx";
+import { isNative } from "../native.js";
 
 export default function Login() {
   const { login } = useAuth();
@@ -47,9 +48,13 @@ export default function Login() {
         <p className="small muted" style={{ marginTop: 6 }}>
           {t("login.shared")} <Link to="/terminal">{t("login.terminal")}</Link>
         </p>
-        <p className="small muted" style={{ marginTop: 6 }}>
-          <a href="/landing/">{t("login.about")}</a>
-        </p>
+        {isNative ? (
+          <p className="small muted" style={{ marginTop: 6 }}><Link to="/">{t("native.back")}</Link></p>
+        ) : (
+          <p className="small muted" style={{ marginTop: 6 }}>
+            <a href="/landing/">{t("login.about")}</a>
+          </p>
+        )}
       </form>
     </div>
   );

@@ -6,6 +6,7 @@ import { useI18n, LangSwitch } from "../i18n.jsx";
 import Clock from "../components/Clock.jsx";
 import DayProgress from "../components/DayProgress.jsx";
 import MissingOut from "../components/MissingOut.jsx";
+import { isNative, consumeScan, haptic } from "../native.js";
 
 // The scan page — the only thing employees ever touch.
 //  · Unclaimed factory tag  → "Set up your clinic" (admin claim form)
@@ -182,6 +183,11 @@ export default function Checkpoint() {
   const [result, setResult] = useState(null); // { name, did, time, worked, review }
   const [busy, setBusy] = useState(false);
   const [unclaimed, setUnclaimed] = useState(false);
+  // In the iOS app a scan is a tag event (deep link / NFC read) for this code,
+  // consumed once per mount; in the browser it's a real navigation.
+  const freshRef = useRef(null);
+  if (freshRef.current === null) freshRef.current = isNative ? consumeScan(code) : FRESH_SCAN;
+  const freshScan = freshRef.current;
   // Unlinked phone: "choose" → "join" (new account) or "link" (my phone);
   // "wait" while an admin decides; "replaced" when this phone was swapped out.
   const [mode, setMode] = useState(() => {
@@ -268,6 +274,7 @@ export default function Checkpoint() {
   }).catch(() => {});
 
   const showResult = (d, extra = {}) => {
+    haptic("success");
     const att = d.today.attendance;
     setToday(d.today);
     setResult({
@@ -282,6 +289,7 @@ export default function Checkpoint() {
   };
 
   const tapError = (e) => {
+    haptic("error");
     if (e.code === "phone_not_trusted") setError(t("cp.notTrusted"));
     else setError(e.status === 410 ? t("cp.rescanOut") : e.message);
   };
@@ -290,7 +298,7 @@ export default function Checkpoint() {
   // this page load received from a real scan, within its 2-minute life. No
   // silent re-issue — a refreshed tab or a bookmark can't record anything.
   const tap = async (want) => {
-    if (!FRESH_SCAN || Date.now() - issuedAt.current > 110 * 1000) { setError(t("cp.staleScan")); return; }
+    if (!freshScan || Date.now() - issuedAt.current > 110 * 1000) { setError(t("cp.staleScan")); return; }
     setBusy(true); setError("");
     try {
       const geo = await getGeo();
@@ -431,7 +439,7 @@ export default function Checkpoint() {
                     : t("cp.nothingYet")}
                 </div>
                 <DayProgress sessions={today.sessions || []} goalMin={goalMin} />
-                {FRESH_SCAN ? (
+                {freshScan ? (
                   <div className="clock-actions">
                     <button className="btn" disabled={busy} onClick={() => tap(open ? "out" : "in")}>
                       {busy ? t("cp.recording") : t(open ? "dash.clockOut" : "dash.clockIn")}

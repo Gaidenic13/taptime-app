@@ -21,6 +21,8 @@ import Approvals from "./pages/Approvals.jsx";
 import Employees from "./pages/Employees.jsx";
 import Reports from "./pages/Reports.jsx";
 import Settings from "./pages/Settings.jsx";
+import NativeHome from "./pages/NativeHome.jsx";
+import { isNative, listenForTagLinks } from "./native.js";
 
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
@@ -145,6 +147,20 @@ function AppInner() {
     } catch { /* non-fatal */ }
   }, [user]);
 
+  // A new page starts at the top — in the app a scroll offset left behind by
+  // the sign-in form would otherwise push the next page's header under the
+  // status bar.
+  useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
+
+  // iOS app: a tag opened the app (custom scheme / universal link, or an
+  // in-app NFC read). A unique search string remounts the scan page per tap.
+  useEffect(() => {
+    let off = null;
+    listenForTagLinks((path) => navigate(`${path}?scan=${Date.now()}`)).then((f) => { off = f; });
+    return () => { if (off) off(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     api("/me")
       .then((d) => {
@@ -152,7 +168,9 @@ function AppInner() {
         if (d.token && !localStorage.getItem("taptime_token")) setToken(d.token);
         setUser(d.user); refreshPending(d.user); checkOnboarding(d.user);
       })
-      .catch(() => setToken(null))
+      // Only a rejected session drops the token; a network error must not
+      // sign the phone out (in the app the Keychain token is the only credential).
+      .catch((e) => { if (e.status === 401 || e.status === 403) setToken(null); })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -182,7 +200,7 @@ function AppInner() {
     return (
       <AuthCtx.Provider value={ctx}>
         <Routes>
-          <Route path="/checkpoint/:code" element={<Checkpoint />} />
+          <Route path="/checkpoint/:code" element={<Checkpoint key={location.search} />} />
         </Routes>
       </AuthCtx.Provider>
     );
@@ -193,7 +211,8 @@ function AppInner() {
       <AuthCtx.Provider value={ctx}>
         <Routes>
           <Route path="/signup" element={<Signup />} />
-          <Route path="*" element={<Login />} />
+          {isNative && <Route path="/login" element={<Login />} />}
+          <Route path="*" element={isNative ? <NativeHome /> : <Login />} />
         </Routes>
       </AuthCtx.Provider>
     );

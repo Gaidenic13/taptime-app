@@ -36,7 +36,24 @@ import { todayStr, mondayOf, addDays, workedMinutes, breakMinutes } from "./time
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+// The iOS app runs from its own origin (capacitor://localhost) and calls this
+// API cross-origin with Bearer tokens; the browser app stays same-origin.
+const APP_ORIGINS = new Set(["capacitor://localhost", "ionic://localhost", "http://localhost", "https://localhost"]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && APP_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Token, X-Kiosk-Token, X-Factory-Key");
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+  }
+  next();
+});
+
 app.use(express.json());
+
 
 async function publicUser(u) {
   if (!u) return null;

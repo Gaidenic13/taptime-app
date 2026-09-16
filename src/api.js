@@ -1,21 +1,31 @@
+// Same origin on the web; the native app talks to the deployed API directly
+// (VITE_API_BASE), with Bearer tokens only — cookies don't cross origins.
+export const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+
 let token = localStorage.getItem("taptime_token") || null;
+const tokenListeners = new Set();
 
 // Stable per-browser device token — a known-device signal for the risk engine.
+// The native app replaces it with a Keychain-backed one at startup.
 let deviceToken = localStorage.getItem("taptime_device") || null;
 if (!deviceToken) {
   deviceToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, "0")).join("");
   localStorage.setItem("taptime_device", deviceToken);
 }
+export function setDeviceToken(t) { deviceToken = t; localStorage.setItem("taptime_device", t); }
+export function getDeviceToken() { return deviceToken; }
 
 export function setToken(t) {
   token = t;
   if (t) localStorage.setItem("taptime_token", t);
   else localStorage.removeItem("taptime_token");
+  for (const fn of tokenListeners) fn(t);
 }
+export function onTokenChange(fn) { tokenListeners.add(fn); return () => tokenListeners.delete(fn); }
 
 export async function api(path, { method = "GET", body, headers = {} } = {}) {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${API_BASE}/api${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",

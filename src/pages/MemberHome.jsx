@@ -5,6 +5,8 @@ import { useI18n, LangSwitch } from "../i18n.jsx";
 import Clock from "../components/Clock.jsx";
 import DayProgress from "../components/DayProgress.jsx";
 import MissingOut from "../components/MissingOut.jsx";
+import { isNative, scanTag, scanErrorKey } from "../native.js";
+import { useNavigate } from "react-router-dom";
 
 // The member's personal view: today's in/out pairs, the last 7 days, and the
 // month total. No menus — they reach this from the scan page or the app root.
@@ -20,6 +22,16 @@ const todayIso = () => {
 export default function MemberHome() {
   const { user, logout } = useAuth();
   const { t } = useI18n();
+  const navigate = useNavigate();
+  const [scanNote, setScanNote] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const scan = async () => {
+    if (scanning) return;
+    setScanning(true); setScanNote("");
+    try { navigate(await scanTag({ prompt: t("native.nfcPrompt") })); }
+    catch (e) { const key = scanErrorKey(e); if (key) setScanNote(t(key)); }
+    finally { setScanning(false); }
+  };
   const [today, setToday] = useState(null);
   const [goalMin, setGoalMin] = useState(480);
   const [missing, setMissing] = useState([]);
@@ -40,13 +52,19 @@ export default function MemberHome() {
   const monthTotal = days.reduce((s, d) => s + (d.worked_min || 0), 0);
 
   return (
-    <div className="login-wrap" style={{ alignItems: "start", paddingTop: 28 }}>
+    <div className="login-wrap" style={{ alignItems: "start", paddingTop: "calc(env(safe-area-inset-top) + 28px)" }}>
       <div className="corner-lang"><LangSwitch /></div>
       <div className="card login-card" style={{ textAlign: "left" }}>
         <div className="brand" style={{ justifyContent: "flex-start" }}><span className="brand-mark">T</span>TapTime</div>
         <h2 style={{ marginTop: 6 }}>{t("dash.hi", { name: user.first_name })}</h2>
         {user.employment_status === "pending" && <div className="ok-box">{t("cp.pending", { name: user.first_name })}</div>}
         {user.employment_status === "rejected" && <div className="error-box">{t("cp.rejected")}</div>}
+        {isNative && (
+          <>
+            <button className="btn big" style={{ marginTop: 10 }} disabled={scanning} onClick={scan}>{t("native.scan")}</button>
+            {scanNote && <div className="error-box" style={{ marginTop: 10 }}>{scanNote}</div>}
+          </>
+        )}
         <MissingOut missing={missing} onChange={loadMe} />
         {today && user.employment_status === "active" && (() => {
           const open = today.status === "working" || today.status === "break";

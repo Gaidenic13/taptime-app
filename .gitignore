@@ -9,3 +9,10 @@ server/taptime.db-shm
 .DS_Store
 .vercel
 .env*
+
+# iOS (Capacitor)
+ios/DerivedData
+ios/App/App/public
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+assets/generated

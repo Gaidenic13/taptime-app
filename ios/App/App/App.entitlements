@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- In-app tag reading (Core NFC). Needs the NFC capability on the App ID. -->
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>NDEF</string>
+	</array>
+	<!-- Tag taps open the app directly once the AASA file is published with the team's App ID. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:taptime-app.vercel.app</string>
+	</array>
+</dict>
+</plist>

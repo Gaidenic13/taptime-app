@@ -136,3 +136,40 @@ src/pages          Login · Terminal (kiosk) · Checkpoint · Dashboard · MyAtt
 
 Passkeys/WebAuthn identity step-up · email/push notification transports ·
 automatic recurring schedules · appointment-system integration · payroll-specific exports.
+
+## iOS app (Capacitor)
+
+The same React app ships as a native iOS app (`ios/`, Capacitor 8, Swift Package Manager — no CocoaPods).
+What is native: the worker's identity (device token + session) lives in the iOS Keychain
+(`ios/App/App/TapTimeNativePlugin.swift`), tags open the app through the `taptime://` URL scheme
+(Universal Links once an Apple Team ID is available — see below), an in-app "Scan the clinic tag" button reads
+the tag with Core NFC, and check-in/out gives haptic feedback. The web app is unchanged: everything in
+`src/native.js` is a no-op in a browser.
+
+**Build for the simulator**
+
+```bash
+npm run ios:sync:dev      # web build pointing at http://localhost:4180 (run `npm run dev` for the API), then cap sync
+npm run ios:build         # xcodebuild for the iOS Simulator (ad-hoc signed, Keychain works)
+```
+
+Or open the project in Xcode: `npm run ios:open`, pick a simulator, Run. For a build against production use
+`npm run ios:sync:prod` first. If `xcodebuild` reports "You don't have permission to save…" the repo lives in a
+folder macOS protects (e.g. `~/Documents`): build from Xcode once (grant access) or copy `ios/` +
+`node_modules/@capacitor` somewhere writable and run `xcodebuild` there with `-derivedDataPath` outside the repo.
+
+**Simulate a tag tap** (the simulator has no NFC; DEBUG builds accept launch arguments):
+
+```bash
+xcrun simctl launch booted com.taptime.app -taptime-url "taptime://checkpoint/<tag-code>"
+```
+
+`-taptime-js-file <path>` additionally runs a script inside the web view after launch (`-taptime-js-delay`
+seconds, default 3) — handy for driving flows headlessly; both flags exist only in DEBUG builds.
+
+**Before a device / App Store build**: set a development team in Xcode (Signing & Capabilities), add the
+*Near Field Communication Tag Reading* capability (entitlement `com.apple.developer.nfc.readersession.formats`
+= NDEF), and for tag taps that open the app directly add *Associated Domains*
+(`applinks:taptime-app.vercel.app`) plus an `apple-app-site-association` file served from
+`/.well-known/` with the team's App ID. `NSAllowsLocalNetworking` in `Info.plist` only allows the
+`http://localhost` dev API; production talks to `https://taptime-app.vercel.app`.
